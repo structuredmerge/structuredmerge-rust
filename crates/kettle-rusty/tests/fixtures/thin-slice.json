@@ -1,0 +1,40 @@
+{
+  "case_id": "kettle-rusty-vnext-readme-changelog-managed-block",
+  "ecosystem": "crates",
+  "inputs": {
+    "files": {
+      "Cargo.toml": "[package]\nname = \"example-rusty\"\nversion = \"0.1.0\"\nedition = \"2024\"\ndescription = \"Example Rust crate\"\nhomepage = \"https://example.test/rusty\"\nrepository = \"https://github.com/example/rusty\"\nlicense = \"MIT\"\nrust-version = \"1.85\"\n",
+      "README.md": "# Old Crate\n\nExisting crate intro.\n",
+      "CHANGELOG.md": "# Changelog\n\n## [0.1.0] - 2026-01-01\n\n- Initial release.\n",
+      "src/generated_package_info.rs": "pub const LOCAL_VALUE: bool = true;\n"
+    }
+  },
+  "expected": {
+    "facts": {
+      "package": {
+        "ecosystem": "crates",
+        "name": "example-rusty",
+        "slug": "example-rusty",
+        "description": "Example Rust crate",
+        "homepage_url": "https://example.test/rusty",
+        "source_url": "https://github.com/example/rusty",
+        "license_expression": "MIT"
+      },
+      "cargo": {
+        "manifest_path": "Cargo.toml",
+        "rust_version": "1.85",
+        "edition": "2024"
+      }
+    },
+    "changed_files": [
+      "CHANGELOG.md",
+      "README.md",
+      "src/generated_package_info.rs"
+    ],
+    "files": {
+      "README.md": "# example-rusty\n\nExisting crate intro.\n\n<!-- kettle-rusty:metadata:start -->\n| Field | Value |\n|---|---|\n| Package | example-rusty |\n| Description | Example Rust crate |\n| Homepage | https://example.test/rusty |\n| Source | https://github.com/example/rusty |\n| License | MIT |\n<!-- kettle-rusty:metadata:end -->\n",
+      "CHANGELOG.md": "# Changelog\n\n## [Unreleased]\n\n### Added\n\n### Changed\n\n### Fixed\n\n## [0.1.0] - 2026-01-01\n\n- Initial release.\n",
+      "src/generated_package_info.rs": "pub const LOCAL_VALUE: bool = true;\n// <<kettle-rusty:generated>> do not edit below this line\npub const PACKAGE_NAME: &str = \"example-rusty\";\npub const PACKAGE_ECOSYSTEM: &str = \"crates\";\n// <</kettle-rusty:generated>>\n"
+    }
+  }
+}
