@@ -64,6 +64,7 @@ pub enum PackagingRecipeName {
     ReadmeMetadata,
     ChangelogUnreleased,
     GeneratedBlockSync,
+    TemplateSourceApplication,
 }
 
 impl PackagingRecipeName {
@@ -72,6 +73,7 @@ impl PackagingRecipeName {
             Self::ReadmeMetadata => "readme_metadata",
             Self::ChangelogUnreleased => "changelog_unreleased",
             Self::GeneratedBlockSync => "generated_block_sync",
+            Self::TemplateSourceApplication => "template_source_application",
         }
     }
 }
@@ -178,6 +180,21 @@ pub fn recipe_pack() -> RecipePack {
     }
 }
 
+pub fn packaged_template_inventory_pack() -> RecipePack {
+    RecipePack {
+        name: "kettle-rusty-packaged-template-inventory".to_string(),
+        version: 1,
+        ecosystem: "crates".to_string(),
+        recipes: vec![
+            template_recipe(".cargo/config.toml"),
+            template_recipe(".editorconfig"),
+            template_recipe(".github/workflows/ci.yml"),
+            template_recipe(".gitignore"),
+            template_recipe("rustfmt.toml"),
+        ],
+    }
+}
+
 pub fn plan_project(project_root: &Path) -> Result<ProjectReport, KettleRustyError> {
     let facts = discover_facts(project_root)?;
     let pack = recipe_pack();
@@ -187,12 +204,7 @@ pub fn plan_project(project_root: &Path) -> Result<ProjectReport, KettleRustyErr
         .iter()
         .map(|recipe| execute_recipe(project_root, recipe, &facts, &files))
         .collect::<Vec<_>>();
-    let mut changed_files = recipe_reports
-        .iter()
-        .filter(|report| report.changed)
-        .map(|report| report.relative_path.clone())
-        .collect::<Vec<_>>();
-    changed_files.sort();
+    let changed_files = changed_files_for_reports(&recipe_reports);
 
     Ok(ProjectReport {
         mode: "plan".to_string(),
@@ -203,6 +215,52 @@ pub fn plan_project(project_root: &Path) -> Result<ProjectReport, KettleRustyErr
         changed_files,
         diagnostics: vec![],
     })
+}
+
+pub fn plan_packaged_template_inventory(
+    project_root: &Path,
+) -> Result<ProjectReport, KettleRustyError> {
+    let facts = discover_facts(project_root)?;
+    let pack = packaged_template_inventory_pack();
+    let files = read_project_files(project_root, &pack)?;
+    let recipe_reports = pack
+        .recipes
+        .iter()
+        .map(|recipe| execute_recipe(project_root, recipe, &facts, &files))
+        .collect::<Vec<_>>();
+    let changed_files = changed_files_for_reports(&recipe_reports);
+
+    Ok(ProjectReport {
+        mode: "plan".to_string(),
+        ready: true,
+        facts,
+        recipe_pack: pack,
+        recipe_reports,
+        changed_files,
+        diagnostics: vec![],
+    })
+}
+
+pub fn apply_packaged_template_inventory(
+    project_root: &Path,
+) -> Result<ProjectReport, KettleRustyError> {
+    let mut report = plan_packaged_template_inventory(project_root)?;
+    report.mode = "apply".to_string();
+    for recipe_report in &report.recipe_reports {
+        if !recipe_report.changed {
+            continue;
+        }
+
+        let target_path = project_root.join(&recipe_report.relative_path);
+        if let Some(parent) = target_path.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|source| KettleRustyError::Io { path: parent.to_path_buf(), source })?;
+        }
+        fs::write(&target_path, &recipe_report.final_content)
+            .map_err(|source| KettleRustyError::Io { path: target_path, source })?;
+    }
+
+    Ok(report)
 }
 
 pub fn apply_project(project_root: &Path) -> Result<ProjectReport, KettleRustyError> {
@@ -268,6 +326,9 @@ fn execute_recipe(
         PackagingRecipeName::ReadmeMetadata => synchronize_readme(&original, facts),
         PackagingRecipeName::ChangelogUnreleased => normalize_changelog(&original),
         PackagingRecipeName::GeneratedBlockSync => synchronize_managed_block(&original, facts),
+        PackagingRecipeName::TemplateSourceApplication => {
+            render_packaged_template(&recipe.target_path, facts)
+        }
     };
     let request = content_recipe_execution_request(ContentRecipeExecutionRequest {
         recipe_name: recipe.primitive.clone(),
@@ -304,6 +365,48 @@ fn execute_recipe(
         report_envelope: content_recipe_execution_report_envelope(report),
         final_content,
         diagnostics: vec![],
+    }
+}
+
+fn template_recipe(target_path: &str) -> PackagingRecipe {
+    recipe_entry(
+        PackagingRecipeName::TemplateSourceApplication,
+        target_path,
+        "text",
+        "supplied_template_source_application",
+        &["package", "templates"],
+    )
+}
+
+fn changed_files_for_reports(reports: &[RecipeRunReport]) -> Vec<String> {
+    let mut changed_files = reports
+        .iter()
+        .filter(|report| report.changed)
+        .map(|report| report.relative_path.clone())
+        .collect::<Vec<_>>();
+    changed_files.sort();
+    changed_files
+}
+
+fn render_packaged_template(target_path: &str, facts: &PackageFacts) -> String {
+    packaged_template_content(target_path)
+        .replace("{{PACKAGE_NAME}}", &facts.package.name)
+        .replace("{{RUST_VERSION}}", facts.cargo.rust_version.as_deref().unwrap_or("stable"))
+        .replace("{{RUST_EDITION}}", facts.cargo.edition.as_deref().unwrap_or("2021"))
+}
+
+fn packaged_template_content(target_path: &str) -> &'static str {
+    match target_path {
+        ".cargo/config.toml" => "[build]\nrustflags = []\n",
+        ".editorconfig" => {
+            "root = true\n\n[*]\ncharset = utf-8\nend_of_line = lf\ninsert_final_newline = true\ntrim_trailing_whitespace = true\n"
+        }
+        ".github/workflows/ci.yml" => {
+            "name: CI\n\non:\n  push:\n  pull_request:\n\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - uses: dtolnay/rust-toolchain@stable\n        with:\n          toolchain: \"{{RUST_VERSION}}\"\n      - run: cargo test --all-features\n"
+        }
+        ".gitignore" => "/target/\nCargo.lock\n",
+        "rustfmt.toml" => "edition = \"{{RUST_EDITION}}\"\nnewline_style = \"Unix\"\n",
+        _ => "",
     }
 }
 

@@ -4,7 +4,10 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use kettle_rusty::{apply_project, plan_project};
+use kettle_rusty::{
+    apply_packaged_template_inventory, apply_project, plan_packaged_template_inventory,
+    plan_project,
+};
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -97,6 +100,46 @@ fn plans_and_applies_cargo_package_templating_requests() {
     assert_eq!(
         read_project_files(&project_root, fixture.expected.files.keys()),
         fixture.expected.files
+    );
+
+    fs::remove_dir_all(project_root).expect("temporary project should be removable");
+}
+
+#[test]
+fn plans_applies_and_reapplies_packaged_template_inventory() {
+    let project_root = manifest_dir().join("tmp/packaged-template-inventory");
+    let _ = fs::remove_dir_all(&project_root);
+    write_tree(
+        &project_root,
+        &BTreeMap::from([(
+            "Cargo.toml".to_string(),
+            "[package]\nname = \"widget\"\nversion = \"0.1.0\"\nedition = \"2021\"\nrust-version = \"1.75\"\n".to_string(),
+        )]),
+    );
+
+    let expected_changed = vec![
+        ".cargo/config.toml".to_string(),
+        ".editorconfig".to_string(),
+        ".github/workflows/ci.yml".to_string(),
+        ".gitignore".to_string(),
+        "rustfmt.toml".to_string(),
+    ];
+    let plan = plan_packaged_template_inventory(&project_root).expect("plan should succeed");
+    assert_eq!(plan.recipe_pack.name, "kettle-rusty-packaged-template-inventory");
+    assert_eq!(plan.changed_files, expected_changed);
+
+    let apply = apply_packaged_template_inventory(&project_root).expect("apply should succeed");
+    assert_eq!(apply.changed_files, expected_changed);
+    let ci = fs::read_to_string(project_root.join(".github/workflows/ci.yml"))
+        .expect("CI template should exist");
+    assert!(ci.contains("toolchain: \"1.75\""));
+
+    let second = apply_packaged_template_inventory(&project_root).expect("reapply should succeed");
+    assert!(second.changed_files.is_empty());
+    assert_eq!(
+        fs::read_to_string(project_root.join(".github/workflows/ci.yml"))
+            .expect("CI template should still exist"),
+        ci
     );
 
     fs::remove_dir_all(project_root).expect("temporary project should be removable");
