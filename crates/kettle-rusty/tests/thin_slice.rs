@@ -288,6 +288,8 @@ fn conforms_to_readme_style_profile() {
         "## 🦷 FLOSS Funding",
         "cargo add widget",
         "https://logos.galtzo.com/assets/images/tree-sitter/tree-sitter/avatar-192px.svg",
+        "StructuredMerge packages provide fixture-backed merge behavior",
+        "| tree-sitter-language-pack | Go, Ruby, Rust, TypeScript | markdown, toml, yaml, source |",
     ] {
         assert!(plan.final_content.contains(snippet), "{snippet}\n{}", plan.final_content);
     }
