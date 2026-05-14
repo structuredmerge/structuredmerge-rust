@@ -11,7 +11,7 @@ use ast_merge::{
     StructuredEditApplication, StructuredEditOperationProfile, StructuredEditRequest,
     StructuredEditResult,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use toml::Value as TomlValue;
 
@@ -110,10 +110,92 @@ pub struct ProjectReport {
     pub diagnostics: Vec<Diagnostic>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct ReadmeStyleReport {
+    pub readme_path: String,
+    pub changed: bool,
+    pub style: String,
+    pub preserved_sections: Vec<String>,
+    pub rendered_sections: Vec<String>,
+    pub omitted_sections: Vec<String>,
+    pub missing_integrations: Vec<String>,
+    pub disabled_integrations: Vec<String>,
+    pub unresolved_logo_slugs: Vec<String>,
+    pub license_files_changed: bool,
+    pub copyright_authors: Vec<String>,
+    pub final_content: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct KettleConfig {
+    #[serde(default)]
+    pub readme: ReadmeConfig,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct ReadmeConfig {
+    #[serde(default)]
+    pub style: String,
+    #[serde(default)]
+    pub project_emoji: String,
+    #[serde(default)]
+    pub logo_row: ReadmeLogoRowConfig,
+    #[serde(default)]
+    pub badges: ReadmeBadgesConfig,
+    #[serde(default)]
+    pub preserve_sections: Vec<String>,
+    #[serde(default)]
+    pub section_aliases: HashMap<String, String>,
+    #[serde(default)]
+    pub conditional_sections: ReadmeConditionalConfig,
+    #[serde(default)]
+    pub license: ReadmeLicenseConfig,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct ReadmeLogoRowConfig {
+    pub enabled: Option<bool>,
+    #[serde(default)]
+    pub max_count: usize,
+    #[serde(default)]
+    pub logos: Vec<ReadmeLogo>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct ReadmeLogo {
+    #[serde(default)]
+    pub r#type: String,
+    #[serde(default)]
+    pub slug: String,
+    #[serde(default)]
+    pub alt: String,
+    #[serde(default)]
+    pub href: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct ReadmeBadgesConfig {
+    #[serde(default)]
+    pub disabled: Vec<String>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct ReadmeConditionalConfig {
+    #[serde(default)]
+    pub floss_funding: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct ReadmeLicenseConfig {
+    #[serde(default)]
+    pub spdx: Vec<String>,
+}
+
 #[derive(Debug)]
 pub enum KettleRustyError {
     Io { path: PathBuf, source: io::Error },
     Toml { path: PathBuf, source: toml::de::Error },
+    Yaml { path: PathBuf, source: serde_yaml::Error },
     MissingPackageTable { path: PathBuf },
     MissingPackageName { path: PathBuf },
 }
@@ -280,6 +362,30 @@ pub fn apply_project(project_root: &Path) -> Result<ProjectReport, KettleRustyEr
             .map_err(|source| KettleRustyError::Io { path: target_path, source })?;
     }
 
+    Ok(report)
+}
+
+pub fn plan_readme_style(project_root: &Path) -> Result<ReadmeStyleReport, KettleRustyError> {
+    let facts = discover_facts(project_root)?;
+    let config = read_kettle_config(project_root)?;
+    let readme_path = project_root.join("README.md");
+    let original = if readme_path.exists() {
+        fs::read_to_string(&readme_path)
+            .map_err(|source| KettleRustyError::Io { path: readme_path.clone(), source })?
+    } else {
+        String::new()
+    };
+    let has_security = project_root.join("SECURITY.md").exists();
+    Ok(render_readme_style(&original, &facts, config.readme, has_security))
+}
+
+pub fn apply_readme_style(project_root: &Path) -> Result<ReadmeStyleReport, KettleRustyError> {
+    let report = plan_readme_style(project_root)?;
+    if report.changed {
+        let target_path = project_root.join(&report.readme_path);
+        fs::write(&target_path, &report.final_content)
+            .map_err(|source| KettleRustyError::Io { path: target_path, source })?;
+    }
     Ok(report)
 }
 
@@ -649,6 +755,287 @@ fn runtime_context(facts: &PackageFacts) -> HashMap<String, Value> {
         ("package".to_string(), json!(facts.package)),
         ("cargo".to_string(), json!(facts.cargo)),
     ])
+}
+
+fn read_kettle_config(project_root: &Path) -> Result<KettleConfig, KettleRustyError> {
+    let path = project_root.join("kettle.yml");
+    if !path.exists() {
+        return Ok(KettleConfig::default());
+    }
+    let source = fs::read_to_string(&path)
+        .map_err(|source| KettleRustyError::Io { path: path.clone(), source })?;
+    serde_yaml::from_str(&source).map_err(|source| KettleRustyError::Yaml { path, source })
+}
+
+fn render_readme_style(
+    destination: &str,
+    facts: &PackageFacts,
+    mut config: ReadmeConfig,
+    has_security: bool,
+) -> ReadmeStyleReport {
+    default_readme_config(&mut config);
+    let preserved = preserved_readme_sections(destination, &config);
+    let license = readme_license(&config, facts);
+    let (logo_row, unresolved_logo_slugs) = readme_logo_row(&config);
+    let (badge_cloud, missing_integrations, disabled_integrations) =
+        readme_badge_cloud(&config, facts, &license, has_security);
+    let include_funding = should_include_funding(&config, &license);
+    let mut rendered_sections = vec![
+        "Project Name",
+        "Badges",
+        "Synopsis",
+        "Info you can shake a stick at",
+        "Installation",
+        "Configuration",
+        "Basic Usage",
+        "Versioning",
+        "License",
+        "A request for help",
+    ]
+    .into_iter()
+    .map(str::to_string)
+    .collect::<Vec<_>>();
+    if !logo_row.is_empty() {
+        rendered_sections.insert(0, "Logos".to_string());
+    }
+    if include_funding {
+        rendered_sections.push("FLOSS Funding".to_string());
+    }
+    if has_security {
+        rendered_sections.push("Security".to_string());
+    }
+    rendered_sections.push("Contributing".to_string());
+
+    let mut omitted_sections =
+        vec!["Hostile RubyGems Takeover".to_string(), "Secure Installation".to_string()];
+    if !include_funding {
+        omitted_sections.push("FLOSS Funding".to_string());
+    }
+    if !has_security {
+        omitted_sections.push("Security".to_string());
+    }
+
+    let mut sections = Vec::new();
+    if !logo_row.is_empty() {
+        sections.push(logo_row);
+    }
+    sections.push(format!("# {} {}", config.project_emoji, facts.package.name));
+    if !badge_cloud.is_empty() {
+        sections.push(badge_cloud);
+    }
+    sections.extend([
+        format!("## 🌻 Synopsis\n\n{}", preserved.get("synopsis").cloned().unwrap_or_default()),
+        format!(
+            "## 💡 Info you can shake a stick at\n\nCompatible with Rust {}.\n\n<details markdown=\"1\">\n<summary>Compatibility, federated DVCS, and enterprise support</summary>\n\nAdditional compatibility and support details are generated from package metadata and shared fixtures.\n\n</details>",
+            facts.cargo.rust_version.as_deref().unwrap_or("unknown")
+        ),
+        format!("## ✨ Installation\n\n```console\ncargo add {}\n```", facts.package.name),
+        format!(
+            "## ⚙️ Configuration\n\n{}",
+            preserved.get("configuration").cloned().unwrap_or_default()
+        ),
+        format!(
+            "## 🔧 Basic Usage\n\n{}",
+            preserved.get("basic usage").cloned().unwrap_or_default()
+        ),
+    ]);
+    if include_funding {
+        sections.push("## 🦷 FLOSS Funding\n\nThis free software project accepts funding support when configured by the package maintainer.".to_string());
+    }
+    if has_security {
+        sections.push("## 🔐 Security\n\nSee [SECURITY.md](SECURITY.md).".to_string());
+    }
+    sections.extend([
+        "## 🤝 Contributing\n\nContributions are welcome. Missing optional service integrations are reported by the generator instead of rendered as broken badges.".to_string(),
+        "## 📌 Versioning\n\nThis project follows semantic versioning for its public API where practical.".to_string(),
+        format!("## 📄 License\n\n{}", license_paragraph(&license)),
+        "## 🤑 A request for help\n\nPlease support the project by using it, reporting issues, and contributing improvements.".to_string(),
+    ]);
+    let final_content = ensure_trailing_newline(&sections.join("\n\n"));
+    ReadmeStyleReport {
+        readme_path: "README.md".to_string(),
+        changed: final_content != destination,
+        style: config.style,
+        preserved_sections: vec![
+            "Synopsis".to_string(),
+            "Configuration".to_string(),
+            "Basic Usage".to_string(),
+        ],
+        rendered_sections,
+        omitted_sections,
+        missing_integrations,
+        disabled_integrations,
+        unresolved_logo_slugs,
+        license_files_changed: false,
+        copyright_authors: vec![],
+        final_content,
+    }
+}
+
+fn default_readme_config(config: &mut ReadmeConfig) {
+    if config.style.is_empty() {
+        config.style = "thin".to_string();
+    }
+    if config.project_emoji.is_empty() {
+        config.project_emoji = "💎".to_string();
+    }
+    if config.preserve_sections.is_empty() {
+        config.preserve_sections =
+            vec!["Synopsis".to_string(), "Configuration".to_string(), "Basic Usage".to_string()];
+    }
+    for (from, to) in [
+        ("summary", "synopsis"),
+        ("usage", "basic usage"),
+        ("configuration options", "configuration"),
+        ("setup", "basic usage"),
+    ] {
+        config.section_aliases.entry(from.to_string()).or_insert_with(|| to.to_string());
+    }
+    if config.logo_row.max_count == 0 {
+        config.logo_row.max_count = 3;
+    }
+}
+
+fn preserved_readme_sections(content: &str, config: &ReadmeConfig) -> HashMap<String, String> {
+    let sections = markdown_section_bodies(content);
+    let aliases = config
+        .section_aliases
+        .iter()
+        .map(|(from, to)| (normalize_readme_heading(from), normalize_readme_heading(to)))
+        .collect::<HashMap<_, _>>();
+    let mut result = HashMap::new();
+    for section in &config.preserve_sections {
+        let key = normalize_readme_heading(section);
+        let value = sections.get(&key).cloned().or_else(|| {
+            aliases
+                .iter()
+                .find_map(|(from, to)| (to == &key).then(|| sections.get(from).cloned()).flatten())
+        });
+        result.insert(key, value.unwrap_or_default());
+    }
+    result
+}
+
+fn markdown_section_bodies(content: &str) -> HashMap<String, String> {
+    let lines = content.lines().collect::<Vec<_>>();
+    let headings = lines
+        .iter()
+        .enumerate()
+        .filter_map(|(index, line)| {
+            let level = line.chars().take_while(|ch| *ch == '#').count();
+            if level == 0 || level > 6 || !line.chars().nth(level).is_some_and(|ch| ch == ' ') {
+                return None;
+            }
+            Some((index, level, normalize_readme_heading(&line[level + 1..])))
+        })
+        .collect::<Vec<_>>();
+    let mut result = HashMap::new();
+    for (index, (start, level, key)) in headings.iter().enumerate() {
+        let end = headings[index + 1..]
+            .iter()
+            .find_map(|(candidate_start, candidate_level, _)| {
+                (candidate_level <= level).then_some(*candidate_start)
+            })
+            .unwrap_or(lines.len());
+        result.insert(key.clone(), lines[start + 1..end].join("\n").trim().to_string());
+    }
+    result
+}
+
+fn normalize_readme_heading(value: &str) -> String {
+    let trimmed = value.trim();
+    let fields = trimmed.split_whitespace().collect::<Vec<_>>();
+    if fields.len() > 1 && !fields[0].chars().next().is_some_and(|ch| ch.is_ascii_alphanumeric()) {
+        fields[1..].join(" ").to_ascii_lowercase()
+    } else {
+        trimmed.to_ascii_lowercase()
+    }
+}
+
+fn readme_license(config: &ReadmeConfig, facts: &PackageFacts) -> String {
+    if !config.license.spdx.is_empty() {
+        return config.license.spdx.join(" OR ");
+    }
+    facts.package.license_expression.clone().unwrap_or_else(|| "MIT".to_string())
+}
+
+fn readme_logo_row(config: &ReadmeConfig) -> (String, Vec<String>) {
+    if config.logo_row.enabled == Some(false) {
+        return (String::new(), vec![]);
+    }
+    let max_count = config.logo_row.max_count.clamp(1, 3);
+    let mut parts = Vec::new();
+    let mut unresolved = Vec::new();
+    for logo in config.logo_row.logos.iter().take(max_count) {
+        let logo_type = logo.r#type.trim().to_ascii_lowercase().replace('-', "_");
+        if !["language", "org", "project", "affiliated_project"].contains(&logo_type.as_str())
+            || logo.slug.trim().is_empty()
+        {
+            unresolved.push(logo.slug.clone());
+            continue;
+        }
+        let slug = logo.slug.trim();
+        let reference = slug.replace('/', "-");
+        let alt = if logo.alt.trim().is_empty() { slug } else { logo.alt.trim() };
+        let href = if logo.href.trim().is_empty() {
+            format!("https://logos.galtzo.com/assets/images/{slug}/")
+        } else {
+            logo.href.clone()
+        };
+        parts.push(format!(
+            "[![{alt}][🖼️{reference}-i]][🖼️{reference}]\n[🖼️{reference}-i]: https://logos.galtzo.com/assets/images/{slug}/avatar-192px.svg\n[🖼️{reference}]: {href}"
+        ));
+    }
+    (parts.join("\n"), unresolved)
+}
+
+fn readme_badge_cloud(
+    config: &ReadmeConfig,
+    facts: &PackageFacts,
+    license: &str,
+    has_security: bool,
+) -> (String, Vec<String>, Vec<String>) {
+    let disabled = config.badges.disabled.clone();
+    let missing = ["codecov", "coveralls", "qlty", "codeql"]
+        .into_iter()
+        .filter(|integration| !disabled.contains(&(*integration).to_string()))
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    let mut badges = Vec::new();
+    if let Some(source_url) = &facts.package.source_url {
+        badges.push(format!(
+            "[![Source](https://img.shields.io/badge/source-github-238636.svg)]({source_url})"
+        ));
+    }
+    if !license.is_empty() {
+        badges.push(format!(
+            "![License](https://img.shields.io/badge/license-{}-259D6C.svg)",
+            license.replace(' ', "%20")
+        ));
+    }
+    if has_security {
+        badges.push(
+            "[![Security](https://img.shields.io/badge/security-policy-259D6C.svg)](SECURITY.md)"
+                .to_string(),
+        );
+    }
+    (badges.join(" "), missing, disabled)
+}
+
+fn should_include_funding(config: &ReadmeConfig, license: &str) -> bool {
+    match config.conditional_sections.floss_funding.trim().to_ascii_lowercase().as_str() {
+        "disabled" | "false" | "never" => false,
+        "enabled" | "true" | "always" => true,
+        _ => license == "MIT",
+    }
+}
+
+fn license_paragraph(license: &str) -> String {
+    if license == "MIT" {
+        "This project is made available under the terms of the MIT License.".to_string()
+    } else {
+        format!("This project is made available under the following license expression: {license}.")
+    }
 }
 
 fn string_field(package: &toml::map::Map<String, TomlValue>, key: &str) -> Option<String> {

@@ -5,8 +5,8 @@ use std::{
 };
 
 use kettle_rusty::{
-    apply_packaged_template_inventory, apply_project, plan_packaged_template_inventory,
-    plan_project,
+    apply_packaged_template_inventory, apply_project, apply_readme_style,
+    plan_packaged_template_inventory, plan_project, plan_readme_style,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -141,6 +141,141 @@ fn plans_applies_and_reapplies_packaged_template_inventory() {
             .expect("CI template should still exist"),
         ci
     );
+
+    fs::remove_dir_all(project_root).expect("temporary project should be removable");
+}
+
+#[test]
+fn conforms_to_readme_style_profile() {
+    let style_fixture: Value = read_json(
+        &repo_root()
+            .join("fixtures/diagnostics/slice-740-kettle-readme-style-profile/kettle-readme-style-profile.json"),
+    );
+    assert_eq!(
+        style_fixture["profile"]["name"],
+        Value::String("kettle-readme-style-profile".to_string())
+    );
+
+    let project_root = manifest_dir().join("tmp/readme-style-profile");
+    let _ = fs::remove_dir_all(&project_root);
+    write_tree(
+        &project_root,
+        &BTreeMap::from([
+            (
+                "Cargo.toml".to_string(),
+                "[package]\nname = \"widget\"\nversion = \"0.1.0\"\nedition = \"2024\"\nrust-version = \"1.85\"\nrepository = \"https://github.com/acme/widget\"\nlicense = \"MIT\"\n".to_string(),
+            ),
+            (
+                "kettle.yml".to_string(),
+                [
+                    "readme:",
+                    "  style: thin",
+                    "  project_emoji: \"🦀\"",
+                    "  logo_row:",
+                    "    enabled: true",
+                    "    max_count: 3",
+                    "    logos:",
+                    "      - type: language",
+                    "        slug: rust-lang",
+                    "        alt: Rust language logo",
+                    "      - type: org",
+                    "        slug: acme",
+                    "        alt: Acme org logo",
+                    "      - type: affiliated_project",
+                    "        slug: tree-sitter/tree-sitter",
+                    "        alt: Tree-sitter project logo",
+                    "      - type: project",
+                    "        slug: acme/ignored",
+                    "        alt: Ignored fourth logo",
+                    "  preserve_sections:",
+                    "    - Synopsis",
+                    "    - Configuration",
+                    "    - Basic Usage",
+                    "  section_aliases:",
+                    "    Usage: Basic Usage",
+                    "  conditional_sections:",
+                    "    floss_funding: default_for_mit_opt_in_otherwise",
+                    "  badges:",
+                    "    disabled:",
+                    "      - coveralls",
+                    "  license:",
+                    "    spdx:",
+                    "      - MIT",
+                    "",
+                ]
+                .join("\n"),
+            ),
+            ("SECURITY.md".to_string(), "# Security\n".to_string()),
+            (
+                "README.md".to_string(),
+                [
+                    "# Old Widget",
+                    "",
+                    "## Summary",
+                    "",
+                    "Destination synopsis.",
+                    "",
+                    "## Configuration",
+                    "",
+                    "Destination configuration.",
+                    "",
+                    "## Usage",
+                    "",
+                    "Destination usage.",
+                    "",
+                ]
+                .join("\n"),
+            ),
+        ]),
+    );
+
+    let plan = plan_readme_style(&project_root).expect("README style plan should succeed");
+    assert!(plan.changed);
+    assert_eq!(plan.style, "thin");
+    for section in ["Synopsis", "Configuration", "Basic Usage"] {
+        assert!(plan.preserved_sections.contains(&section.to_string()));
+    }
+    for section in [
+        "Logos",
+        "Project Name",
+        "Badges",
+        "Synopsis",
+        "Installation",
+        "Configuration",
+        "Basic Usage",
+        "FLOSS Funding",
+        "Security",
+        "Contributing",
+        "Versioning",
+        "License",
+        "A request for help",
+    ] {
+        assert!(plan.rendered_sections.contains(&section.to_string()), "{section}");
+    }
+    assert!(plan.omitted_sections.contains(&"Hostile RubyGems Takeover".to_string()));
+    assert!(plan.omitted_sections.contains(&"Secure Installation".to_string()));
+    assert!(plan.missing_integrations.contains(&"codecov".to_string()));
+    assert!(plan.missing_integrations.contains(&"qlty".to_string()));
+    assert!(!plan.missing_integrations.contains(&"coveralls".to_string()));
+    assert!(plan.disabled_integrations.contains(&"coveralls".to_string()));
+    assert!(!plan.final_content.contains("Ignored fourth logo"));
+    for snippet in [
+        "# 🦀 widget",
+        "## 🌻 Synopsis\n\nDestination synopsis.",
+        "## ⚙️ Configuration\n\nDestination configuration.",
+        "## 🔧 Basic Usage\n\nDestination usage.",
+        "## 🔐 Security\n\nSee [SECURITY.md](SECURITY.md).",
+        "## 🦷 FLOSS Funding",
+        "cargo add widget",
+        "https://logos.galtzo.com/assets/images/tree-sitter/tree-sitter/avatar-192px.svg",
+    ] {
+        assert!(plan.final_content.contains(snippet), "{snippet}\n{}", plan.final_content);
+    }
+
+    let apply = apply_readme_style(&project_root).expect("README style apply should succeed");
+    assert!(apply.changed);
+    let second = apply_readme_style(&project_root).expect("README style reapply should succeed");
+    assert!(!second.changed);
 
     fs::remove_dir_all(project_root).expect("temporary project should be removable");
 }
