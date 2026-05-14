@@ -122,6 +122,7 @@ fn plans_applies_and_reapplies_packaged_template_inventory() {
         ".editorconfig".to_string(),
         ".github/workflows/ci.yml".to_string(),
         ".gitignore".to_string(),
+        "README.md".to_string(),
         "rustfmt.toml".to_string(),
     ];
     let plan = plan_packaged_template_inventory(&project_root).expect("plan should succeed");
@@ -133,6 +134,21 @@ fn plans_applies_and_reapplies_packaged_template_inventory() {
     let ci = fs::read_to_string(project_root.join(".github/workflows/ci.yml"))
         .expect("CI template should exist");
     assert!(ci.contains("toolchain: \"1.75\""));
+    let readme =
+        fs::read_to_string(project_root.join("README.md")).expect("README template should exist");
+    for snippet in [
+        "# widget",
+        "## Synopsis",
+        "## Installation",
+        "cargo add widget",
+        "## Configuration",
+        "## Basic Usage",
+    ] {
+        assert!(
+            readme.contains(snippet),
+            "expected README template to include {snippet:?}, got:\n{readme}"
+        );
+    }
 
     let second = apply_packaged_template_inventory(&project_root).expect("reapply should succeed");
     assert!(second.changed_files.is_empty());
@@ -140,6 +156,10 @@ fn plans_applies_and_reapplies_packaged_template_inventory() {
         fs::read_to_string(project_root.join(".github/workflows/ci.yml"))
             .expect("CI template should still exist"),
         ci
+    );
+    assert_eq!(
+        fs::read_to_string(project_root.join("README.md")).expect("README template should exist"),
+        readme
     );
 
     fs::remove_dir_all(project_root).expect("temporary project should be removable");

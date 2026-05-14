@@ -272,6 +272,7 @@ pub fn packaged_template_inventory_pack() -> RecipePack {
             template_recipe(".editorconfig"),
             template_recipe(".github/workflows/ci.yml"),
             template_recipe(".gitignore"),
+            template_recipe("README.md"),
             template_recipe("rustfmt.toml"),
         ],
     }
@@ -511,6 +512,9 @@ fn packaged_template_content(target_path: &str) -> &'static str {
             "name: CI\n\non:\n  push:\n  pull_request:\n\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - uses: dtolnay/rust-toolchain@stable\n        with:\n          toolchain: \"{{RUST_VERSION}}\"\n      - run: cargo test --all-features\n"
         }
         ".gitignore" => "/target/\nCargo.lock\n",
+        "README.md" => {
+            "# {{PACKAGE_NAME}}\n\n## Synopsis\n\n## Installation\n\n```sh\ncargo add {{PACKAGE_NAME}}\n```\n\n## Configuration\n\n## Basic Usage\n"
+        }
         "rustfmt.toml" => "edition = \"{{RUST_EDITION}}\"\nnewline_style = \"Unix\"\n",
         _ => "",
     }
