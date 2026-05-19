@@ -981,7 +981,7 @@ fn markdown_section_bodies(content: &str) -> HashMap<String, String> {
         .enumerate()
         .filter_map(|(index, line)| {
             let level = line.chars().take_while(|ch| *ch == '#').count();
-            if level == 0 || level > 6 || !line.chars().nth(level).is_some_and(|ch| ch == ' ') {
+            if level == 0 || level > 6 || line.chars().nth(level).is_none_or(|ch| ch != ' ') {
                 return None;
             }
             Some((index, level, normalize_readme_heading(&line[level + 1..])))
