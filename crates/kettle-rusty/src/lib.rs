@@ -737,21 +737,32 @@ fn replace_between_markers(
     replacement: &str,
     fallback: impl FnOnce() -> String,
 ) -> String {
-    let Some(open_index) = content.find(open_marker) else {
+    let lines = content.split('\n').collect::<Vec<_>>();
+    let Some(open_line) = marker_line_index(&lines, open_marker, 0) else {
         return fallback();
     };
-    let Some(close_index) =
-        content[open_index..].find(close_marker).map(|index| open_index + index)
-    else {
+    let Some(close_line) = marker_line_index(&lines, close_marker, open_line + 1) else {
         return fallback();
     };
 
-    let mut close_end = close_index + close_marker.len();
-    if content[close_end..].starts_with('\n') {
-        close_end += 1;
-    }
+    let mut result = Vec::new();
+    result.extend_from_slice(&lines[..open_line]);
+    result.extend(replacement_lines(replacement));
+    result.extend_from_slice(&lines[(close_line + 1)..]);
+    result.join("\n")
+}
 
-    format!("{}{replacement}\n{}", &content[..open_index], &content[close_end..])
+fn marker_line_index(lines: &[&str], marker: &str, start_line: usize) -> Option<usize> {
+    lines
+        .iter()
+        .enumerate()
+        .skip(start_line)
+        .find_map(|(index, line)| (*line == marker).then_some(index))
+}
+
+fn replacement_lines(replacement: &str) -> Vec<&str> {
+    let normalized = replacement.strip_suffix('\n').unwrap_or(replacement);
+    normalized.split('\n').collect()
 }
 
 fn runtime_context(facts: &PackageFacts) -> HashMap<String, Value> {
