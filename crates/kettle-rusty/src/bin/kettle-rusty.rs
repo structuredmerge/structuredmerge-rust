@@ -1,6 +1,9 @@
 use std::{env, path::PathBuf, process::ExitCode};
 
-use kettle_rusty::{ProjectReport, apply_project, plan_project};
+use kettle_rusty::{
+    ProjectReport, apply_packaged_template_inventory, apply_project,
+    plan_packaged_template_inventory, plan_project,
+};
 
 #[derive(Debug, Eq, PartialEq)]
 struct Command {
@@ -13,6 +16,8 @@ struct Command {
 enum Action {
     Plan,
     Apply,
+    TemplatePlan,
+    TemplateApply,
 }
 
 fn main() -> ExitCode {
@@ -30,6 +35,8 @@ fn run(args: Vec<String>) -> Result<(), String> {
     let report = match command.action {
         Action::Plan => plan_project(&command.project_root),
         Action::Apply => apply_project(&command.project_root),
+        Action::TemplatePlan => plan_packaged_template_inventory(&command.project_root),
+        Action::TemplateApply => apply_packaged_template_inventory(&command.project_root),
     }
     .map_err(|error| error.to_string())?;
 
@@ -42,10 +49,13 @@ fn run(args: Vec<String>) -> Result<(), String> {
 }
 
 fn parse_args(args: &[String]) -> Result<Command, String> {
-    let usage = "usage: kettle-rusty <plan|apply> [--json] [PROJECT_ROOT]";
+    let usage =
+        "usage: kettle-rusty <plan|apply|template-plan|template-apply> [--json] [PROJECT_ROOT]";
     let action = match args.first().map(String::as_str) {
         Some("plan") => Action::Plan,
         Some("apply") => Action::Apply,
+        Some("template-plan") => Action::TemplatePlan,
+        Some("template-apply") => Action::TemplateApply,
         Some("--help" | "-h") => return Err(usage.to_string()),
         Some(value) => return Err(format!("unknown action {value:?}; {usage}")),
         None => return Err(usage.to_string()),
@@ -96,5 +106,17 @@ mod tests {
         let error = parse_args(&["apply".into(), "one".into(), "two".into()])
             .expect_err("arguments should fail");
         assert!(error.contains("unexpected argument"));
+    }
+
+    #[test]
+    fn parses_packaged_template_application() {
+        assert_eq!(
+            parse_args(&["template-apply".into()]).expect("arguments should parse"),
+            Command {
+                action: Action::TemplateApply,
+                project_root: PathBuf::from("."),
+                json: false
+            }
+        );
     }
 }
