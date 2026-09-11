@@ -240,6 +240,40 @@ fn applies_explicit_kettle_template_entries_only() {
 }
 
 #[test]
+fn disables_packaged_template_inventory_for_disabled_profile() {
+    let project_root = manifest_dir().join("tmp/disabled-template-profile");
+    let _ = fs::remove_dir_all(&project_root);
+    write_tree(
+        &project_root,
+        &BTreeMap::from([
+            (
+                "Cargo.toml".to_string(),
+                "[package]\nname = \"widget\"\nversion = \"0.1.0\"\nedition = \"2021\"\n"
+                    .to_string(),
+            ),
+            (
+                "kettle.yml".to_string(),
+                "templates:\n  profile: disabled\n".to_string(),
+            ),
+        ]),
+    );
+
+    let plan = plan_packaged_template_inventory(&project_root)
+        .expect("disabled template profile should be reportable");
+    assert!(plan.recipe_pack.recipes.is_empty());
+    assert!(plan.recipe_reports.is_empty());
+    assert!(plan.changed_files.is_empty());
+    assert!(plan.diagnostics.is_empty());
+
+    let applied = apply_packaged_template_inventory(&project_root)
+        .expect("disabled template profile should remain a no-op");
+    assert!(applied.changed_files.is_empty());
+    assert!(!project_root.join("README.md").exists());
+
+    fs::remove_dir_all(project_root).expect("temporary project should be removable");
+}
+
+#[test]
 fn applies_profiled_local_template_sources_without_packaged_fallback() {
     let project_root = manifest_dir().join("tmp/profiled-local-templates");
     let _ = fs::remove_dir_all(&project_root);
