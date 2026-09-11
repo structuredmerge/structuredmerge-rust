@@ -340,6 +340,32 @@ fn discovers_sorted_cargo_dependency_facts() {
 }
 
 #[test]
+fn discovers_sorted_github_workflow_paths() {
+    let project_root = manifest_dir().join("tmp/workflow-facts");
+    let _ = fs::remove_dir_all(&project_root);
+    write_tree(
+        &project_root,
+        &BTreeMap::from([
+            (
+                "Cargo.toml".to_string(),
+                "[package]\nname = \"widget\"\nversion = \"0.1.0\"\n".to_string(),
+            ),
+            (".github/workflows/zeta.yml".to_string(), "name: Zeta\n".to_string()),
+            (".github/workflows/alpha.yaml".to_string(), "name: Alpha\n".to_string()),
+            (".github/workflows/README.md".to_string(), "not a workflow\n".to_string()),
+        ]),
+    );
+
+    let facts = kettle_rusty::discover_facts(&project_root).expect("Cargo facts should load");
+    assert_eq!(
+        facts.ci.expect("workflow facts should be present").workflow_paths,
+        vec![".github/workflows/alpha.yaml", ".github/workflows/zeta.yml"]
+    );
+
+    fs::remove_dir_all(project_root).expect("temporary project should be removable");
+}
+
+#[test]
 fn project_application_is_idempotent_after_the_first_run() {
     let project_root = manifest_dir().join("tmp/project-idempotency");
     let _ = fs::remove_dir_all(&project_root);

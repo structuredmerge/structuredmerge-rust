@@ -24,6 +24,8 @@ const MANAGED_BLOCK_CLOSE: &str = "// <</kettle-rusty:generated>>";
 pub struct PackageFacts {
     pub package: PackageFactGroup,
     pub cargo: CargoFactGroup,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ci: Option<CiFactGroup>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -52,6 +54,11 @@ pub struct CargoFactGroup {
     pub dependencies: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub dev_dependencies: Vec<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct CiFactGroup {
+    pub workflow_paths: Vec<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -241,6 +248,7 @@ pub fn discover_facts(project_root: &Path) -> Result<PackageFacts, KettleRustyEr
     let name = string_field(package, "name")
         .ok_or_else(|| KettleRustyError::MissingPackageName { path: manifest_path.clone() })?;
 
+    let workflow_paths = workflow_paths(project_root)?;
     Ok(PackageFacts {
         package: PackageFactGroup {
             ecosystem: "crates".to_string(),
@@ -258,6 +266,7 @@ pub fn discover_facts(project_root: &Path) -> Result<PackageFacts, KettleRustyEr
             dependencies: dependency_names(&manifest, "dependencies"),
             dev_dependencies: dependency_names(&manifest, "dev-dependencies"),
         },
+        ci: (!workflow_paths.is_empty()).then_some(CiFactGroup { workflow_paths }),
     })
 }
 
@@ -1188,6 +1197,47 @@ fn dependency_names(manifest: &TomlValue, section: &str) -> Vec<String> {
         return vec![];
     };
     table.keys().cloned().collect()
+}
+
+fn workflow_paths(project_root: &Path) -> Result<Vec<String>, KettleRustyError> {
+    let workflow_root = project_root.join(".github/workflows");
+    if !workflow_root.exists() {
+        return Ok(vec![]);
+    }
+    let mut paths = fs::read_dir(&workflow_root)
+        .map_err(|source| KettleRustyError::Io { path: workflow_root.clone(), source })?
+        .map(|entry| {
+            let entry = entry
+                .map_err(|source| KettleRustyError::Io { path: workflow_root.clone(), source })?;
+            let path = entry.path();
+            let is_workflow = path.is_file()
+                && matches!(
+                    path.extension().and_then(|extension| extension.to_str()),
+                    Some("yml" | "yaml")
+                );
+            if is_workflow {
+                Ok(Some(
+                    path.strip_prefix(project_root)
+                        .map_err(|_| KettleRustyError::Io {
+                            path: path.clone(),
+                            source: io::Error::new(
+                                io::ErrorKind::InvalidData,
+                                "workflow path escaped project root",
+                            ),
+                        })?
+                        .to_string_lossy()
+                        .replace(std::path::MAIN_SEPARATOR, "/"),
+                ))
+            } else {
+                Ok(None)
+            }
+        })
+        .collect::<Result<Vec<_>, KettleRustyError>>()?
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
+    paths.sort();
+    Ok(paths)
 }
 
 fn ensure_trailing_newline(text: &str) -> String {
