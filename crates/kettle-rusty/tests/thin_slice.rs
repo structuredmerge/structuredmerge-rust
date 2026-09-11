@@ -364,6 +364,13 @@ fn discovers_a_single_explicit_workspace_member() {
             .contains("PACKAGE_NAME")
     );
     assert!(!project_root.join("src/generated_package_info.rs").exists());
+    let readme_plan =
+        kettle_rusty::plan_readme_style(&project_root).expect("workspace README plan should load");
+    assert_eq!(readme_plan.readme_path, "crates/widget/README.md");
+    let readme_apply = kettle_rusty::apply_readme_style(&project_root)
+        .expect("workspace README apply should load");
+    assert_eq!(readme_apply.readme_path, "crates/widget/README.md");
+    assert!(project_root.join("crates/widget/README.md").exists());
 
     fs::remove_dir_all(project_root).expect("temporary project should be removable");
 }

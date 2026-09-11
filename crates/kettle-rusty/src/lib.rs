@@ -463,7 +463,8 @@ pub fn apply_project(project_root: &Path) -> Result<ProjectReport, KettleRustyEr
 pub fn plan_readme_style(project_root: &Path) -> Result<ReadmeStyleReport, KettleRustyError> {
     let facts = discover_facts(project_root)?;
     let config = read_kettle_config(project_root)?;
-    let readme_path = project_root.join("README.md");
+    let readme_relative_path = recipe_target_path(&facts, "README.md");
+    let readme_path = project_root.join(&readme_relative_path);
     let original = if readme_path.exists() {
         fs::read_to_string(&readme_path)
             .map_err(|source| KettleRustyError::Io { path: readme_path.clone(), source })?
@@ -471,7 +472,9 @@ pub fn plan_readme_style(project_root: &Path) -> Result<ReadmeStyleReport, Kettl
         String::new()
     };
     let has_security = project_root.join("SECURITY.md").exists();
-    Ok(render_readme_style(&original, &facts, config.readme, has_security))
+    let mut report = render_readme_style(&original, &facts, config.readme, has_security);
+    report.readme_path = readme_relative_path;
+    Ok(report)
 }
 
 pub fn apply_readme_style(project_root: &Path) -> Result<ReadmeStyleReport, KettleRustyError> {
