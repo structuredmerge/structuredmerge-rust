@@ -321,6 +321,25 @@ fn rejects_cargo_manifests_without_a_package_name() {
 }
 
 #[test]
+fn discovers_sorted_cargo_dependency_facts() {
+    let project_root = manifest_dir().join("tmp/dependency-facts");
+    let _ = fs::remove_dir_all(&project_root);
+    write_tree(
+        &project_root,
+        &BTreeMap::from([(
+            "Cargo.toml".to_string(),
+            "[package]\nname = \"widget\"\nversion = \"0.1.0\"\n\n[dependencies]\nzeta = \"1\"\nalpha = { version = \"2\" }\n\n[dev-dependencies]\nserde_json = \"1\"\ncriterion = \"0.5\"\n".to_string(),
+        )]),
+    );
+
+    let facts = kettle_rusty::discover_facts(&project_root).expect("Cargo facts should load");
+    assert_eq!(facts.cargo.dependencies, vec!["alpha", "zeta"]);
+    assert_eq!(facts.cargo.dev_dependencies, vec!["criterion", "serde_json"]);
+
+    fs::remove_dir_all(project_root).expect("temporary project should be removable");
+}
+
+#[test]
 fn project_application_is_idempotent_after_the_first_run() {
     let project_root = manifest_dir().join("tmp/project-idempotency");
     let _ = fs::remove_dir_all(&project_root);

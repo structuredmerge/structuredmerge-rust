@@ -48,6 +48,10 @@ pub struct CargoFactGroup {
     pub rust_version: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub edition: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub dependencies: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub dev_dependencies: Vec<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -251,6 +255,8 @@ pub fn discover_facts(project_root: &Path) -> Result<PackageFacts, KettleRustyEr
             manifest_path: "Cargo.toml".to_string(),
             rust_version: string_field(package, "rust-version"),
             edition: string_field(package, "edition"),
+            dependencies: dependency_names(&manifest, "dependencies"),
+            dev_dependencies: dependency_names(&manifest, "dev-dependencies"),
         },
     })
 }
@@ -1175,6 +1181,13 @@ fn string_field(package: &toml::map::Map<String, TomlValue>, key: &str) -> Optio
         .and_then(TomlValue::as_str)
         .filter(|value| !value.is_empty())
         .map(str::to_string)
+}
+
+fn dependency_names(manifest: &TomlValue, section: &str) -> Vec<String> {
+    let Some(table) = manifest.get(section).and_then(TomlValue::as_table) else {
+        return vec![];
+    };
+    table.keys().cloned().collect()
 }
 
 fn ensure_trailing_newline(text: &str) -> String {
