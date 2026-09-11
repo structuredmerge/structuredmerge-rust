@@ -313,7 +313,8 @@ fn rejects_cargo_manifests_without_a_package_name() {
         &BTreeMap::from([("Cargo.toml".to_string(), "[workspace]\nmembers = []\n".to_string())]),
     );
 
-    let error = kettle_rusty::plan_project(&project_root).expect_err("workspace-only manifest should fail");
+    let error =
+        kettle_rusty::plan_project(&project_root).expect_err("workspace-only manifest should fail");
     assert!(matches!(error, kettle_rusty::KettleRustyError::MissingPackageTable { .. }));
 
     fs::remove_dir_all(project_root).expect("temporary project should be removable");
@@ -331,9 +332,11 @@ fn project_application_is_idempotent_after_the_first_run() {
         )]),
     );
 
-    let first = kettle_rusty::apply_project(&project_root).expect("first application should succeed");
+    let first =
+        kettle_rusty::apply_project(&project_root).expect("first application should succeed");
     assert!(!first.changed_files.is_empty());
-    let second = kettle_rusty::apply_project(&project_root).expect("second application should succeed");
+    let second =
+        kettle_rusty::apply_project(&project_root).expect("second application should succeed");
     assert!(second.changed_files.is_empty());
     assert!(second.recipe_reports.iter().all(|report| !report.changed));
 
