@@ -526,7 +526,23 @@ fn execute_recipe(
     files: &HashMap<String, String>,
 ) -> RecipeRunReport {
     let original = files.get(&recipe.target_path).cloned().unwrap_or_default();
-    let diagnostics = managed_block_diagnostic(recipe, &original);
+    let mut diagnostics = managed_block_diagnostic(recipe, &original);
+    if recipe.name == PackagingRecipeName::TemplateSourceApplication && !original.trim().is_empty()
+    {
+        let rendered = render_packaged_template(&recipe.target_path, facts);
+        if original != rendered {
+            diagnostics.push(Diagnostic {
+                severity: DiagnosticSeverity::Warning,
+                category: DiagnosticCategory::Ambiguity,
+                message: format!(
+                    "existing packaged template differs from kettle-rusty source for {}; preserving destination content",
+                    recipe.target_path
+                ),
+                path: Some(recipe.target_path.clone()),
+                review: None,
+            });
+        }
+    }
     let final_content = if diagnostics.is_empty() {
         match recipe.name {
             PackagingRecipeName::ReadmeMetadata => synchronize_readme(&original, facts),

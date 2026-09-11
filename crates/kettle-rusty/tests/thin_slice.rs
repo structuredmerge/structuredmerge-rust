@@ -166,6 +166,49 @@ fn plans_applies_and_reapplies_packaged_template_inventory() {
 }
 
 #[test]
+fn preserves_differing_existing_packaged_templates_with_a_diagnostic() {
+    let project_root = manifest_dir().join("tmp/packaged-template-conflict");
+    let _ = fs::remove_dir_all(&project_root);
+    let existing = "name: project-owned CI\n\n jobs: {}\n";
+    write_tree(
+        &project_root,
+        &BTreeMap::from([
+            (
+                "Cargo.toml".to_string(),
+                "[package]\nname = \"widget\"\nversion = \"0.1.0\"\nedition = \"2021\"\n"
+                    .to_string(),
+            ),
+            (".github/workflows/ci.yml".to_string(), existing.to_string()),
+        ]),
+    );
+
+    let plan = plan_packaged_template_inventory(&project_root).expect("plan should succeed");
+    let workflow = plan
+        .recipe_reports
+        .iter()
+        .find(|report| report.relative_path == ".github/workflows/ci.yml")
+        .expect("workflow report should exist");
+    assert!(!workflow.changed);
+    assert_eq!(workflow.final_content, existing);
+    assert_eq!(plan.changed_files.len(), 5);
+    assert!(
+        workflow.diagnostics.iter().any(|diagnostic| {
+            diagnostic.message.contains("existing packaged template differs")
+        })
+    );
+
+    let applied = apply_packaged_template_inventory(&project_root).expect("apply should succeed");
+    assert!(!applied.changed_files.contains(&".github/workflows/ci.yml".to_string()));
+    assert_eq!(
+        fs::read_to_string(project_root.join(".github/workflows/ci.yml"))
+            .expect("project-owned workflow should remain readable"),
+        existing
+    );
+
+    fs::remove_dir_all(project_root).expect("temporary project should be removable");
+}
+
+#[test]
 fn conforms_to_readme_style_profile() {
     let style_fixture: Value = read_json(
         &repo_root()
