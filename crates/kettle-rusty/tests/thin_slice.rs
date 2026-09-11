@@ -519,6 +519,28 @@ fn discovers_a_single_explicit_workspace_member() {
 }
 
 #[test]
+fn rejects_workspace_members_that_escape_or_use_glob_syntax() {
+    for member in ["../outside", "crates/*"] {
+        let directory_name = member.replace(['/', '*'], "-");
+        let project_root =
+            manifest_dir().join(format!("tmp/invalid-workspace-member-{directory_name}"));
+        let _ = fs::remove_dir_all(&project_root);
+        write_tree(
+            &project_root,
+            &BTreeMap::from([(
+                "Cargo.toml".to_string(),
+                format!("[workspace]\nmembers = [\"{member}\"]\n"),
+            )]),
+        );
+
+        let error = kettle_rusty::discover_facts(&project_root)
+            .expect_err("unsafe workspace member should fail closed");
+        assert!(matches!(error, kettle_rusty::KettleRustyError::InvalidWorkspaceMember { .. }));
+        fs::remove_dir_all(project_root).expect("temporary project should be removable");
+    }
+}
+
+#[test]
 fn discovers_sorted_cargo_dependency_facts() {
     let project_root = manifest_dir().join("tmp/dependency-facts");
     let _ = fs::remove_dir_all(&project_root);

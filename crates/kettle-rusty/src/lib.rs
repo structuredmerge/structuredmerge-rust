@@ -1,7 +1,7 @@
 use std::{
     collections::HashMap,
     fmt, fs, io,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
 };
 
 use ast_merge::{
@@ -268,6 +268,7 @@ pub enum KettleRustyError {
     Yaml { path: PathBuf, source: serde_yaml::Error },
     MissingPackageTable { path: PathBuf },
     MissingPackageName { path: PathBuf },
+    InvalidWorkspaceMember { path: PathBuf, member: String },
     MissingTemplateSource { path: PathBuf },
 }
 
@@ -288,6 +289,9 @@ impl fmt::Display for KettleRustyError {
             }
             Self::MissingPackageName { path } => {
                 write!(formatter, "Cargo package name missing at {}", path.display())
+            }
+            Self::InvalidWorkspaceMember { path, member } => {
+                write!(formatter, "invalid workspace member {member:?} in {}", path.display())
             }
             Self::MissingTemplateSource { path } => {
                 write!(formatter, "template source missing at {}", path.display())
@@ -368,7 +372,19 @@ fn package_manifest(
     let member = members[0].as_str().ok_or_else(|| KettleRustyError::MissingPackageTable {
         path: root_manifest_path.to_path_buf(),
     })?;
-    let member_manifest_path = project_root.join(member).join("Cargo.toml");
+    let member_path = Path::new(member);
+    if member_path.is_absolute()
+        || member_path.components().any(|component| {
+            matches!(component, Component::ParentDir | Component::RootDir | Component::Prefix(_))
+        })
+        || member.contains('*')
+    {
+        return Err(KettleRustyError::InvalidWorkspaceMember {
+            path: root_manifest_path.to_path_buf(),
+            member: member.to_string(),
+        });
+    }
+    let member_manifest_path = project_root.join(member_path).join("Cargo.toml");
     let member_source = fs::read_to_string(&member_manifest_path)
         .map_err(|source| KettleRustyError::Io { path: member_manifest_path.clone(), source })?;
     let member_manifest: TomlValue = toml::from_str(&member_source)
