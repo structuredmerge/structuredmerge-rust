@@ -458,17 +458,32 @@ fn discovers_sorted_github_workflow_paths() {
                 "Cargo.toml".to_string(),
                 "[package]\nname = \"widget\"\nversion = \"0.1.0\"\n".to_string(),
             ),
-            (".github/workflows/zeta.yml".to_string(), "name: Zeta\n".to_string()),
-            (".github/workflows/alpha.yaml".to_string(), "name: Alpha\n".to_string()),
+            (
+                ".github/workflows/zeta.yml".to_string(),
+                "name: Zeta\non: [workflow_dispatch, push]\njobs:\n  deploy:\n    runs-on: ubuntu-latest\n  build:\n    runs-on: ubuntu-latest\n".to_string(),
+            ),
+            (
+                ".github/workflows/alpha.yaml".to_string(),
+                "name: Alpha\n".to_string(),
+            ),
             (".github/workflows/README.md".to_string(), "not a workflow\n".to_string()),
         ]),
     );
 
     let facts = kettle_rusty::discover_facts(&project_root).expect("Cargo facts should load");
+    let ci = facts.ci.expect("workflow facts should be present");
     assert_eq!(
-        facts.ci.expect("workflow facts should be present").workflow_paths,
+        ci.workflow_paths,
         vec![".github/workflows/alpha.yaml", ".github/workflows/zeta.yml"]
     );
+    let zeta = ci
+        .workflows
+        .iter()
+        .find(|workflow| workflow.path.ends_with("zeta.yml"))
+        .expect("zeta facts should be present");
+    assert_eq!(zeta.name.as_deref(), Some("Zeta"));
+    assert_eq!(zeta.triggers, vec!["push", "workflow_dispatch"]);
+    assert_eq!(zeta.jobs, vec!["build", "deploy"]);
 
     fs::remove_dir_all(project_root).expect("temporary project should be removable");
 }

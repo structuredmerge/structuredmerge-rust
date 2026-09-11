@@ -75,6 +75,17 @@ pub struct CargoDependencyFact {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct CiFactGroup {
     pub workflow_paths: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub workflows: Vec<CiWorkflowFact>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct CiWorkflowFact {
+    pub path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    pub triggers: Vec<String>,
+    pub jobs: Vec<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -267,6 +278,7 @@ pub fn discover_facts(project_root: &Path) -> Result<PackageFacts, KettleRustyEr
         .ok_or_else(|| KettleRustyError::MissingPackageName { path: manifest_path.clone() })?;
 
     let workflow_paths = workflow_paths(project_root)?;
+    let workflows = workflow_facts(project_root, &workflow_paths);
     Ok(PackageFacts {
         package: PackageFactGroup {
             ecosystem: "crates".to_string(),
@@ -285,7 +297,7 @@ pub fn discover_facts(project_root: &Path) -> Result<PackageFacts, KettleRustyEr
             dev_dependencies: dependency_names(&manifest, "dev-dependencies"),
             dependency_specs: dependency_specs(&manifest),
         },
-        ci: (!workflow_paths.is_empty()).then_some(CiFactGroup { workflow_paths }),
+        ci: (!workflow_paths.is_empty()).then_some(CiFactGroup { workflow_paths, workflows }),
     })
 }
 
@@ -1435,6 +1447,55 @@ fn workflow_paths(project_root: &Path) -> Result<Vec<String>, KettleRustyError> 
         .collect::<Vec<_>>();
     paths.sort();
     Ok(paths)
+}
+
+fn workflow_facts(project_root: &Path, paths: &[String]) -> Vec<CiWorkflowFact> {
+    paths
+        .iter()
+        .filter_map(|path| {
+            let source = fs::read_to_string(project_root.join(path)).ok()?;
+            let document: serde_yaml::Value = serde_yaml::from_str(&source).ok()?;
+            let mapping = document.as_mapping()?;
+            let name = mapping
+                .get(serde_yaml::Value::String("name".to_string()))
+                .and_then(serde_yaml::Value::as_str)
+                .map(str::to_string);
+            let triggers = mapping
+                .get(serde_yaml::Value::String("on".to_string()))
+                .or_else(|| mapping.get(serde_yaml::Value::Bool(true)))
+                .map(workflow_keys)
+                .unwrap_or_default();
+            let jobs = mapping
+                .get(serde_yaml::Value::String("jobs".to_string()))
+                .and_then(serde_yaml::Value::as_mapping)
+                .map(|jobs| {
+                    let mut names = jobs
+                        .keys()
+                        .filter_map(serde_yaml::Value::as_str)
+                        .map(str::to_string)
+                        .collect::<Vec<_>>();
+                    names.sort();
+                    names
+                })
+                .unwrap_or_default();
+            Some(CiWorkflowFact { path: path.clone(), name, triggers, jobs })
+        })
+        .collect()
+}
+
+fn workflow_keys(value: &serde_yaml::Value) -> Vec<String> {
+    let mut keys = match value {
+        serde_yaml::Value::Sequence(values) => {
+            values.iter().filter_map(serde_yaml::Value::as_str).map(str::to_string).collect()
+        }
+        serde_yaml::Value::Mapping(mapping) => {
+            mapping.keys().filter_map(serde_yaml::Value::as_str).map(str::to_string).collect()
+        }
+        serde_yaml::Value::String(value) => vec![value.clone()],
+        _ => Vec::new(),
+    };
+    keys.sort();
+    keys
 }
 
 fn ensure_trailing_newline(text: &str) -> String {
