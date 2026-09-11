@@ -170,6 +170,34 @@ pub struct ReadmeStyleReport {
 pub struct KettleConfig {
     #[serde(default)]
     pub readme: ReadmeConfig,
+    #[serde(default)]
+    pub templates: TemplateConfig,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct TemplateConfig {
+    #[serde(default)]
+    pub profile: String,
+    #[serde(default)]
+    pub entries: Option<Vec<TemplateEntry>>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(untagged)]
+pub enum TemplateEntry {
+    Path(String),
+    Mapping(HashMap<String, serde_yaml::Value>),
+}
+
+impl TemplateEntry {
+    fn target_path(&self) -> Option<&str> {
+        match self {
+            Self::Path(path) => Some(path.as_str()),
+            Self::Mapping(mapping) => ["target_path", "target", "path"]
+                .iter()
+                .find_map(|key| mapping.get(*key).and_then(serde_yaml::Value::as_str)),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -428,7 +456,18 @@ pub fn plan_packaged_template_inventory(
     project_root: &Path,
 ) -> Result<ProjectReport, KettleRustyError> {
     let facts = discover_facts(project_root)?;
-    let pack = packaged_template_inventory_pack();
+    let config = read_kettle_config(project_root)?;
+    let mut pack = packaged_template_inventory_pack();
+    if let Some(entries) = config.templates.entries.as_ref() {
+        let selected = entries
+            .iter()
+            .filter_map(TemplateEntry::target_path)
+            .collect::<std::collections::HashSet<_>>();
+        pack.recipes.retain(|recipe| selected.contains(recipe.target_path.as_str()));
+    }
+    if matches!(config.templates.profile.as_str(), "none" | "disabled") {
+        pack.recipes.clear();
+    }
     let files = read_project_files(project_root, &pack, &facts)?;
     let recipe_reports = pack
         .recipes

@@ -209,6 +209,37 @@ fn preserves_differing_existing_packaged_templates_with_a_diagnostic() {
 }
 
 #[test]
+fn applies_explicit_kettle_template_entries_only() {
+    let project_root = manifest_dir().join("tmp/packaged-template-selection");
+    let _ = fs::remove_dir_all(&project_root);
+    write_tree(
+        &project_root,
+        &BTreeMap::from([
+            (
+                "Cargo.toml".to_string(),
+                "[package]\nname = \"widget\"\nversion = \"0.1.0\"\nedition = \"2021\"\n"
+                    .to_string(),
+            ),
+            (
+                "kettle.yml".to_string(),
+                "templates:\n  entries:\n    - target_path: .gitignore\n".to_string(),
+            ),
+        ]),
+    );
+
+    let plan = plan_packaged_template_inventory(&project_root).expect("plan should succeed");
+    assert_eq!(plan.recipe_reports.len(), 1);
+    assert_eq!(plan.changed_files, vec![".gitignore"]);
+
+    let apply = apply_packaged_template_inventory(&project_root).expect("apply should succeed");
+    assert_eq!(apply.changed_files, vec![".gitignore"]);
+    assert!(project_root.join(".gitignore").exists());
+    assert!(!project_root.join("README.md").exists());
+
+    fs::remove_dir_all(project_root).expect("temporary project should be removable");
+}
+
+#[test]
 fn conforms_to_readme_style_profile() {
     let style_fixture: Value = read_json(
         &repo_root()
