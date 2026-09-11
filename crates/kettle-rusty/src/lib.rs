@@ -236,11 +236,13 @@ impl fmt::Display for KettleRustyError {
 impl std::error::Error for KettleRustyError {}
 
 pub fn discover_facts(project_root: &Path) -> Result<PackageFacts, KettleRustyError> {
-    let manifest_path = project_root.join("Cargo.toml");
-    let manifest_source = fs::read_to_string(&manifest_path)
-        .map_err(|source| KettleRustyError::Io { path: manifest_path.clone(), source })?;
-    let manifest: TomlValue = toml::from_str(&manifest_source)
-        .map_err(|source| KettleRustyError::Toml { path: manifest_path.clone(), source })?;
+    let root_manifest_path = project_root.join("Cargo.toml");
+    let root_manifest_source = fs::read_to_string(&root_manifest_path)
+        .map_err(|source| KettleRustyError::Io { path: root_manifest_path.clone(), source })?;
+    let root_manifest: TomlValue = toml::from_str(&root_manifest_source)
+        .map_err(|source| KettleRustyError::Toml { path: root_manifest_path.clone(), source })?;
+    let (manifest_path, manifest_path_display, manifest) =
+        package_manifest(project_root, &root_manifest, &root_manifest_path)?;
     let package = manifest
         .get("package")
         .and_then(TomlValue::as_table)
@@ -260,7 +262,7 @@ pub fn discover_facts(project_root: &Path) -> Result<PackageFacts, KettleRustyEr
             license_expression: string_field(package, "license"),
         },
         cargo: CargoFactGroup {
-            manifest_path: "Cargo.toml".to_string(),
+            manifest_path: manifest_path_display,
             rust_version: string_field(package, "rust-version"),
             edition: string_field(package, "edition"),
             dependencies: dependency_names(&manifest, "dependencies"),
@@ -268,6 +270,53 @@ pub fn discover_facts(project_root: &Path) -> Result<PackageFacts, KettleRustyEr
         },
         ci: (!workflow_paths.is_empty()).then_some(CiFactGroup { workflow_paths }),
     })
+}
+
+fn package_manifest(
+    project_root: &Path,
+    root_manifest: &TomlValue,
+    root_manifest_path: &Path,
+) -> Result<(PathBuf, String, TomlValue), KettleRustyError> {
+    if root_manifest.get("package").and_then(TomlValue::as_table).is_some() {
+        return Ok((
+            root_manifest_path.to_path_buf(),
+            "Cargo.toml".to_string(),
+            root_manifest.clone(),
+        ));
+    }
+
+    let Some(members) = root_manifest
+        .get("workspace")
+        .and_then(TomlValue::as_table)
+        .and_then(|workspace| workspace.get("members"))
+        .and_then(TomlValue::as_array)
+    else {
+        return Err(KettleRustyError::MissingPackageTable {
+            path: root_manifest_path.to_path_buf(),
+        });
+    };
+    if members.len() != 1 {
+        return Err(KettleRustyError::MissingPackageTable {
+            path: root_manifest_path.to_path_buf(),
+        });
+    }
+    let member = members[0].as_str().ok_or_else(|| KettleRustyError::MissingPackageTable {
+        path: root_manifest_path.to_path_buf(),
+    })?;
+    let member_manifest_path = project_root.join(member).join("Cargo.toml");
+    let member_source = fs::read_to_string(&member_manifest_path)
+        .map_err(|source| KettleRustyError::Io { path: member_manifest_path.clone(), source })?;
+    let member_manifest: TomlValue = toml::from_str(&member_source)
+        .map_err(|source| KettleRustyError::Toml { path: member_manifest_path.clone(), source })?;
+    if member_manifest.get("package").and_then(TomlValue::as_table).is_none() {
+        return Err(KettleRustyError::MissingPackageTable { path: member_manifest_path });
+    }
+    let display_path = member_manifest_path
+        .strip_prefix(project_root)
+        .unwrap_or(member_manifest_path.as_path())
+        .to_string_lossy()
+        .replace(std::path::MAIN_SEPARATOR, "/");
+    Ok((member_manifest_path, display_path, member_manifest))
 }
 
 pub fn recipe_pack() -> RecipePack {

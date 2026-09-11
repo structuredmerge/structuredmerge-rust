@@ -321,6 +321,30 @@ fn rejects_cargo_manifests_without_a_package_name() {
 }
 
 #[test]
+fn discovers_a_single_explicit_workspace_member() {
+    let project_root = manifest_dir().join("tmp/single-workspace-member");
+    let _ = fs::remove_dir_all(&project_root);
+    write_tree(
+        &project_root,
+        &BTreeMap::from([
+            ("Cargo.toml".to_string(), "[workspace]\nmembers = [\"crates/widget\"]\n".to_string()),
+            (
+                "crates/widget/Cargo.toml".to_string(),
+                "[package]\nname = \"widget\"\nversion = \"0.1.0\"\nedition = \"2024\"\n"
+                    .to_string(),
+            ),
+        ]),
+    );
+
+    let facts = kettle_rusty::discover_facts(&project_root).expect("workspace facts should load");
+    assert_eq!(facts.package.name, "widget");
+    assert_eq!(facts.cargo.manifest_path, "crates/widget/Cargo.toml");
+    assert_eq!(facts.cargo.edition.as_deref(), Some("2024"));
+
+    fs::remove_dir_all(project_root).expect("temporary project should be removable");
+}
+
+#[test]
 fn discovers_sorted_cargo_dependency_facts() {
     let project_root = manifest_dir().join("tmp/dependency-facts");
     let _ = fs::remove_dir_all(&project_root);
