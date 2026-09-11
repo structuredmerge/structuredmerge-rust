@@ -369,11 +369,15 @@ pub fn packaged_template_inventory_pack() -> RecipePack {
 pub fn plan_project(project_root: &Path) -> Result<ProjectReport, KettleRustyError> {
     let facts = discover_facts(project_root)?;
     let pack = recipe_pack();
-    let files = read_project_files(project_root, &pack)?;
+    let files = read_project_files(project_root, &pack, &facts)?;
     let recipe_reports = pack
         .recipes
         .iter()
-        .map(|recipe| execute_recipe(project_root, recipe, &facts, &files))
+        .map(|recipe| {
+            let mut recipe = recipe.clone();
+            recipe.target_path = recipe_target_path(&facts, &recipe.target_path);
+            execute_recipe(project_root, &recipe, &facts, &files)
+        })
         .collect::<Vec<_>>();
     let changed_files = changed_files_for_reports(&recipe_reports);
     let diagnostics = diagnostics_for_reports(&recipe_reports);
@@ -394,7 +398,7 @@ pub fn plan_packaged_template_inventory(
 ) -> Result<ProjectReport, KettleRustyError> {
     let facts = discover_facts(project_root)?;
     let pack = packaged_template_inventory_pack();
-    let files = read_project_files(project_root, &pack)?;
+    let files = read_project_files(project_root, &pack, &facts)?;
     let recipe_reports = pack
         .recipes
         .iter()
@@ -778,20 +782,39 @@ fn synchronize_managed_block(content: &str, facts: &PackageFacts) -> String {
 fn read_project_files(
     project_root: &Path,
     pack: &RecipePack,
+    facts: &PackageFacts,
 ) -> Result<HashMap<String, String>, KettleRustyError> {
     pack.recipes
         .iter()
         .map(|recipe| {
-            let target_path = project_root.join(&recipe.target_path);
+            let relative_path = recipe_target_path(facts, &recipe.target_path);
+            let target_path = project_root.join(&relative_path);
             if target_path.exists() {
                 fs::read_to_string(&target_path)
-                    .map(|content| (recipe.target_path.clone(), content))
+                    .map(|content| (relative_path, content))
                     .map_err(|source| KettleRustyError::Io { path: target_path, source })
             } else {
-                Ok((recipe.target_path.clone(), String::new()))
+                Ok((relative_path, String::new()))
             }
         })
         .collect()
+}
+
+fn recipe_target_path(facts: &PackageFacts, target_path: &str) -> String {
+    let package_scoped =
+        matches!(target_path, "README.md" | "CHANGELOG.md" | "src/generated_package_info.rs");
+    if !package_scoped {
+        return target_path.to_string();
+    }
+    let manifest_path = Path::new(&facts.cargo.manifest_path);
+    let Some(package_root) = manifest_path.parent() else {
+        return target_path.to_string();
+    };
+    if package_root.as_os_str().is_empty() {
+        target_path.to_string()
+    } else {
+        package_root.join(target_path).to_string_lossy().replace(std::path::MAIN_SEPARATOR, "/")
+    }
 }
 
 fn recipe_entry(

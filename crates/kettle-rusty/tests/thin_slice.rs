@@ -333,6 +333,12 @@ fn discovers_a_single_explicit_workspace_member() {
                 "[package]\nname = \"widget\"\nversion = \"0.1.0\"\nedition = \"2024\"\n"
                     .to_string(),
             ),
+            ("crates/widget/README.md".to_string(), "# widget\n".to_string()),
+            ("crates/widget/CHANGELOG.md".to_string(), "# Changelog\n".to_string()),
+            (
+                "crates/widget/src/generated_package_info.rs".to_string(),
+                "pub const LOCAL_VALUE: bool = true;\n".to_string(),
+            ),
         ]),
     );
 
@@ -340,6 +346,16 @@ fn discovers_a_single_explicit_workspace_member() {
     assert_eq!(facts.package.name, "widget");
     assert_eq!(facts.cargo.manifest_path, "crates/widget/Cargo.toml");
     assert_eq!(facts.cargo.edition.as_deref(), Some("2024"));
+
+    let plan = kettle_rusty::plan_project(&project_root).expect("workspace plan should load");
+    assert_eq!(
+        plan.changed_files,
+        vec![
+            "crates/widget/CHANGELOG.md",
+            "crates/widget/README.md",
+            "crates/widget/src/generated_package_info.rs",
+        ]
+    );
 
     fs::remove_dir_all(project_root).expect("temporary project should be removable");
 }
