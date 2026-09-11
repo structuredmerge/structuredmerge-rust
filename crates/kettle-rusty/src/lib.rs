@@ -54,6 +54,22 @@ pub struct CargoFactGroup {
     pub dependencies: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub dev_dependencies: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub dependency_specs: Vec<CargoDependencyFact>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct CargoDependencyFact {
+    pub kind: String,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub requirement: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub optional: Option<bool>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -267,6 +283,7 @@ pub fn discover_facts(project_root: &Path) -> Result<PackageFacts, KettleRustyEr
             edition: string_field(package, "edition"),
             dependencies: dependency_names(&manifest, "dependencies"),
             dev_dependencies: dependency_names(&manifest, "dev-dependencies"),
+            dependency_specs: dependency_specs(&manifest),
         },
         ci: (!workflow_paths.is_empty()).then_some(CiFactGroup { workflow_paths }),
     })
@@ -1290,6 +1307,93 @@ fn dependency_names(manifest: &TomlValue, section: &str) -> Vec<String> {
         return vec![];
     };
     table.keys().cloned().collect()
+}
+
+fn dependency_specs(manifest: &TomlValue) -> Vec<CargoDependencyFact> {
+    let mut specs = dependency_specs_for_table(manifest, "dependencies", "runtime", None);
+    specs.extend(dependency_specs_for_table(manifest, "dev-dependencies", "development", None));
+    if let Some(targets) = manifest.get("target").and_then(TomlValue::as_table) {
+        for (target, target_value) in targets {
+            if !target_value.is_table() {
+                continue;
+            }
+            specs.extend(dependency_specs_for_table(
+                target_value,
+                "dependencies",
+                "runtime",
+                Some(target),
+            ));
+            specs.extend(dependency_specs_for_table(
+                target_value,
+                "dev-dependencies",
+                "development",
+                Some(target),
+            ));
+        }
+    }
+    specs.sort_by(|left, right| {
+        (dependency_kind_rank(&left.kind), left.target.as_deref().unwrap_or(""), left.name.as_str())
+            .cmp(&(
+                dependency_kind_rank(&right.kind),
+                right.target.as_deref().unwrap_or(""),
+                right.name.as_str(),
+            ))
+    });
+    specs
+}
+
+fn dependency_kind_rank(kind: &str) -> u8 {
+    match kind {
+        "runtime" => 0,
+        "development" => 1,
+        _ => 2,
+    }
+}
+
+fn dependency_specs_for_table(
+    manifest: &TomlValue,
+    section: &str,
+    kind: &str,
+    target: Option<&str>,
+) -> Vec<CargoDependencyFact> {
+    let Some(table) = manifest.get(section).and_then(TomlValue::as_table) else {
+        return Vec::new();
+    };
+    table
+        .iter()
+        .map(|(name, value)| {
+            let (requirement, source, optional) = match value {
+                TomlValue::String(requirement) => (Some(requirement.clone()), None, None),
+                TomlValue::Table(details) => (
+                    details.get("version").and_then(TomlValue::as_str).map(str::to_string).or_else(
+                        || {
+                            details
+                                .get("workspace")
+                                .and_then(TomlValue::as_bool)
+                                .filter(|workspace| *workspace)
+                                .map(|_| "workspace".to_string())
+                        },
+                    ),
+                    ["path", "git", "registry"].iter().find_map(|key| {
+                        details
+                            .get(*key)
+                            .and_then(TomlValue::as_str)
+                            .map(|value| format!("{key}:{value}"))
+                    }),
+                    details.get("optional").and_then(TomlValue::as_bool),
+                ),
+                _ => (None, None, None),
+            };
+            CargoDependencyFact {
+                kind: kind.to_string(),
+                name: name.clone(),
+                requirement,
+                source,
+                target: target.map(str::to_string),
+                optional,
+            }
+        })
+        .collect()
 }
 
 fn workflow_paths(project_root: &Path) -> Result<Vec<String>, KettleRustyError> {

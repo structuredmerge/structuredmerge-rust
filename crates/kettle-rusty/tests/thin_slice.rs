@@ -428,13 +428,21 @@ fn discovers_sorted_cargo_dependency_facts() {
         &project_root,
         &BTreeMap::from([(
             "Cargo.toml".to_string(),
-            "[package]\nname = \"widget\"\nversion = \"0.1.0\"\n\n[dependencies]\nzeta = \"1\"\nalpha = { version = \"2\" }\n\n[dev-dependencies]\nserde_json = \"1\"\ncriterion = \"0.5\"\n".to_string(),
+            "[package]\nname = \"widget\"\nversion = \"0.1.0\"\n\n[dependencies]\nzeta = \"1\"\nalpha = { version = \"2\", optional = true }\n\n[dev-dependencies]\nserde_json = \"1\"\ncriterion = \"0.5\"\n\n[target.'cfg(unix)'.dependencies]\nunix-only = { version = \"3\", path = \"vendor/unix-only\" }\n".to_string(),
         )]),
     );
 
     let facts = kettle_rusty::discover_facts(&project_root).expect("Cargo facts should load");
     assert_eq!(facts.cargo.dependencies, vec!["alpha", "zeta"]);
     assert_eq!(facts.cargo.dev_dependencies, vec!["criterion", "serde_json"]);
+    assert_eq!(facts.cargo.dependency_specs.len(), 5);
+    assert_eq!(facts.cargo.dependency_specs[0].name, "alpha");
+    assert_eq!(facts.cargo.dependency_specs[0].kind, "runtime");
+    assert_eq!(facts.cargo.dependency_specs[0].requirement.as_deref(), Some("2"));
+    assert_eq!(facts.cargo.dependency_specs[0].optional, Some(true));
+    assert_eq!(facts.cargo.dependency_specs[2].name, "unix-only");
+    assert_eq!(facts.cargo.dependency_specs[2].target.as_deref(), Some("cfg(unix)"));
+    assert_eq!(facts.cargo.dependency_specs[2].source.as_deref(), Some("path:vendor/unix-only"));
 
     fs::remove_dir_all(project_root).expect("temporary project should be removable");
 }
