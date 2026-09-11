@@ -356,6 +356,14 @@ fn discovers_a_single_explicit_workspace_member() {
             "crates/widget/src/generated_package_info.rs",
         ]
     );
+    let apply = kettle_rusty::apply_project(&project_root).expect("workspace apply should load");
+    assert_eq!(apply.changed_files, plan.changed_files);
+    assert!(
+        fs::read_to_string(project_root.join("crates/widget/src/generated_package_info.rs"))
+            .expect("member generated file should be readable")
+            .contains("PACKAGE_NAME")
+    );
+    assert!(!project_root.join("src/generated_package_info.rs").exists());
 
     fs::remove_dir_all(project_root).expect("temporary project should be removable");
 }
