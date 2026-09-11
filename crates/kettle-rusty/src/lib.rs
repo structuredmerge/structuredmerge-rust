@@ -86,6 +86,8 @@ pub struct CiWorkflowFact {
     pub name: Option<String>,
     pub triggers: Vec<String>,
     pub jobs: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parse_error: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -1452,10 +1454,40 @@ fn workflow_paths(project_root: &Path) -> Result<Vec<String>, KettleRustyError> 
 fn workflow_facts(project_root: &Path, paths: &[String]) -> Vec<CiWorkflowFact> {
     paths
         .iter()
-        .filter_map(|path| {
-            let source = fs::read_to_string(project_root.join(path)).ok()?;
-            let document: serde_yaml::Value = serde_yaml::from_str(&source).ok()?;
-            let mapping = document.as_mapping()?;
+        .map(|path| {
+            let source = match fs::read_to_string(project_root.join(path)) {
+                Ok(source) => source,
+                Err(error) => {
+                    return CiWorkflowFact {
+                        path: path.clone(),
+                        name: None,
+                        triggers: Vec::new(),
+                        jobs: Vec::new(),
+                        parse_error: Some(error.to_string()),
+                    };
+                }
+            };
+            let document: serde_yaml::Value = match serde_yaml::from_str(&source) {
+                Ok(document) => document,
+                Err(error) => {
+                    return CiWorkflowFact {
+                        path: path.clone(),
+                        name: None,
+                        triggers: Vec::new(),
+                        jobs: Vec::new(),
+                        parse_error: Some(error.to_string()),
+                    };
+                }
+            };
+            let Some(mapping) = document.as_mapping() else {
+                return CiWorkflowFact {
+                    path: path.clone(),
+                    name: None,
+                    triggers: Vec::new(),
+                    jobs: Vec::new(),
+                    parse_error: Some("workflow document must be a YAML mapping".to_string()),
+                };
+            };
             let name = mapping
                 .get(serde_yaml::Value::String("name".to_string()))
                 .and_then(serde_yaml::Value::as_str)
@@ -1478,7 +1510,7 @@ fn workflow_facts(project_root: &Path, paths: &[String]) -> Vec<CiWorkflowFact> 
                     names
                 })
                 .unwrap_or_default();
-            Some(CiWorkflowFact { path: path.clone(), name, triggers, jobs })
+            CiWorkflowFact { path: path.clone(), name, triggers, jobs, parse_error: None }
         })
         .collect()
 }

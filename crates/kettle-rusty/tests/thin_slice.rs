@@ -466,6 +466,10 @@ fn discovers_sorted_github_workflow_paths() {
                 ".github/workflows/alpha.yaml".to_string(),
                 "name: Alpha\n".to_string(),
             ),
+            (
+                ".github/workflows/broken.yml".to_string(),
+                "name: [broken\n".to_string(),
+            ),
             (".github/workflows/README.md".to_string(), "not a workflow\n".to_string()),
         ]),
     );
@@ -474,8 +478,18 @@ fn discovers_sorted_github_workflow_paths() {
     let ci = facts.ci.expect("workflow facts should be present");
     assert_eq!(
         ci.workflow_paths,
-        vec![".github/workflows/alpha.yaml", ".github/workflows/zeta.yml"]
+        vec![
+            ".github/workflows/alpha.yaml",
+            ".github/workflows/broken.yml",
+            ".github/workflows/zeta.yml"
+        ]
     );
+    let broken = ci
+        .workflows
+        .iter()
+        .find(|workflow| workflow.path.ends_with("broken.yml"))
+        .expect("broken workflow facts should be retained");
+    assert!(broken.parse_error.is_some());
     let zeta = ci
         .workflows
         .iter()
