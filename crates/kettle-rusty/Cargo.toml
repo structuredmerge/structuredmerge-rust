@@ -17,3 +17,7 @@ toml = "0.9"
 
 [lib]
 path = "src/lib.rs"
+
+[[bin]]
+name = "kettle-rusty"
+path = "src/bin/kettle-rusty.rs"

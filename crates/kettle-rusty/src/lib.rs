@@ -1,6 +1,6 @@
 use std::{
     collections::HashMap,
-    fs, io,
+    fmt, fs, io,
     path::{Path, PathBuf},
 };
 
@@ -199,6 +199,30 @@ pub enum KettleRustyError {
     MissingPackageTable { path: PathBuf },
     MissingPackageName { path: PathBuf },
 }
+
+impl fmt::Display for KettleRustyError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Io { path, source } => {
+                write!(formatter, "I/O error at {}: {source}", path.display())
+            }
+            Self::Toml { path, source } => {
+                write!(formatter, "invalid TOML at {}: {source}", path.display())
+            }
+            Self::Yaml { path, source } => {
+                write!(formatter, "invalid YAML at {}: {source}", path.display())
+            }
+            Self::MissingPackageTable { path } => {
+                write!(formatter, "Cargo package table missing at {}", path.display())
+            }
+            Self::MissingPackageName { path } => {
+                write!(formatter, "Cargo package name missing at {}", path.display())
+            }
+        }
+    }
+}
+
+impl std::error::Error for KettleRustyError {}
 
 pub fn discover_facts(project_root: &Path) -> Result<PackageFacts, KettleRustyError> {
     let manifest_path = project_root.join("Cargo.toml");
