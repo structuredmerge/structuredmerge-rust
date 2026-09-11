@@ -334,6 +334,7 @@ fn discovers_a_single_explicit_workspace_member() {
                     .to_string(),
             ),
             ("crates/widget/README.md".to_string(), "# widget\n".to_string()),
+            ("crates/widget/SECURITY.md".to_string(), "# Security\n".to_string()),
             ("crates/widget/CHANGELOG.md".to_string(), "# Changelog\n".to_string()),
             (
                 "crates/widget/src/generated_package_info.rs".to_string(),
@@ -370,6 +371,7 @@ fn discovers_a_single_explicit_workspace_member() {
     let readme_apply = kettle_rusty::apply_readme_style(&project_root)
         .expect("workspace README apply should load");
     assert_eq!(readme_apply.readme_path, "crates/widget/README.md");
+    assert!(readme_apply.final_content.contains("## 🔐 Security"));
     assert!(project_root.join("crates/widget/README.md").exists());
 
     fs::remove_dir_all(project_root).expect("temporary project should be removable");

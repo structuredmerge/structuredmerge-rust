@@ -471,7 +471,7 @@ pub fn plan_readme_style(project_root: &Path) -> Result<ReadmeStyleReport, Kettl
     } else {
         String::new()
     };
-    let has_security = project_root.join("SECURITY.md").exists();
+    let has_security = project_root.join(recipe_target_path(&facts, "SECURITY.md")).exists();
     let mut report = render_readme_style(&original, &facts, config.readme, has_security);
     report.readme_path = readme_relative_path;
     Ok(report)
@@ -804,8 +804,10 @@ fn read_project_files(
 }
 
 fn recipe_target_path(facts: &PackageFacts, target_path: &str) -> String {
-    let package_scoped =
-        matches!(target_path, "README.md" | "CHANGELOG.md" | "src/generated_package_info.rs");
+    let package_scoped = matches!(
+        target_path,
+        "README.md" | "CHANGELOG.md" | "SECURITY.md" | "src/generated_package_info.rs"
+    );
     if !package_scoped {
         return target_path.to_string();
     }
