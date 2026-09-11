@@ -177,6 +177,8 @@ pub struct KettleConfig {
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct TemplateConfig {
     #[serde(default)]
+    pub root: String,
+    #[serde(default)]
     pub profile: String,
     #[serde(default)]
     pub entries: Option<Vec<TemplateEntry>>,
@@ -266,6 +268,7 @@ pub enum KettleRustyError {
     Yaml { path: PathBuf, source: serde_yaml::Error },
     MissingPackageTable { path: PathBuf },
     MissingPackageName { path: PathBuf },
+    MissingTemplateSource { path: PathBuf },
 }
 
 impl fmt::Display for KettleRustyError {
@@ -285,6 +288,9 @@ impl fmt::Display for KettleRustyError {
             }
             Self::MissingPackageName { path } => {
                 write!(formatter, "Cargo package name missing at {}", path.display())
+            }
+            Self::MissingTemplateSource { path } => {
+                write!(formatter, "template source missing at {}", path.display())
             }
         }
     }
@@ -435,9 +441,9 @@ pub fn plan_project(project_root: &Path) -> Result<ProjectReport, KettleRustyErr
         .map(|recipe| {
             let mut recipe = recipe.clone();
             recipe.target_path = recipe_target_path(&facts, &recipe.target_path);
-            execute_recipe(project_root, &recipe, &facts, &files)
+            execute_recipe(project_root, &recipe, &facts, &files, None)
         })
-        .collect::<Vec<_>>();
+        .collect::<Result<Vec<_>, _>>()?;
     let changed_files = changed_files_for_reports(&recipe_reports);
     let diagnostics = diagnostics_for_reports(&recipe_reports);
 
@@ -468,12 +474,15 @@ pub fn plan_packaged_template_inventory(
     if matches!(config.templates.profile.as_str(), "none" | "disabled") {
         pack.recipes.clear();
     }
+    let template_source_root = template_source_root(project_root, &config);
     let files = read_project_files(project_root, &pack, &facts)?;
     let recipe_reports = pack
         .recipes
         .iter()
-        .map(|recipe| execute_recipe(project_root, recipe, &facts, &files))
-        .collect::<Vec<_>>();
+        .map(|recipe| {
+            execute_recipe(project_root, recipe, &facts, &files, template_source_root.as_deref())
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     let changed_files = changed_files_for_reports(&recipe_reports);
     let diagnostics = diagnostics_for_reports(&recipe_reports);
 
@@ -594,12 +603,18 @@ fn execute_recipe(
     recipe: &PackagingRecipe,
     facts: &PackageFacts,
     files: &HashMap<String, String>,
-) -> RecipeRunReport {
+    template_source_root: Option<&Path>,
+) -> Result<RecipeRunReport, KettleRustyError> {
     let original = files.get(&recipe.target_path).cloned().unwrap_or_default();
+    let template_content = if recipe.name == PackagingRecipeName::TemplateSourceApplication {
+        Some(template_content(&recipe.target_path, facts, template_source_root)?)
+    } else {
+        None
+    };
     let mut diagnostics = managed_block_diagnostic(recipe, &original);
     if recipe.name == PackagingRecipeName::TemplateSourceApplication && !original.trim().is_empty()
     {
-        let rendered = render_packaged_template(&recipe.target_path, facts);
+        let rendered = template_content.as_deref().expect("template content should be loaded");
         if original != rendered {
             diagnostics.push(Diagnostic {
                 severity: DiagnosticSeverity::Warning,
@@ -619,7 +634,7 @@ fn execute_recipe(
             PackagingRecipeName::ChangelogUnreleased => normalize_changelog(&original),
             PackagingRecipeName::GeneratedBlockSync => synchronize_managed_block(&original, facts),
             PackagingRecipeName::TemplateSourceApplication => {
-                render_packaged_template(&recipe.target_path, facts)
+                template_content.clone().expect("template content should be loaded")
             }
         }
     } else {
@@ -652,7 +667,7 @@ fn execute_recipe(
         metadata: HashMap::from([("packaging_recipe".to_string(), json!(recipe.name.as_str()))]),
     });
 
-    RecipeRunReport {
+    Ok(RecipeRunReport {
         recipe_name: recipe.name,
         relative_path: recipe.target_path.clone(),
         changed,
@@ -660,7 +675,7 @@ fn execute_recipe(
         report_envelope: content_recipe_execution_report_envelope(report),
         final_content,
         diagnostics,
-    }
+    })
 }
 
 fn managed_block_diagnostic(recipe: &PackagingRecipe, content: &str) -> Vec<Diagnostic> {
@@ -714,11 +729,35 @@ fn diagnostics_for_reports(reports: &[RecipeRunReport]) -> Vec<Diagnostic> {
     reports.iter().flat_map(|report| report.diagnostics.clone()).collect()
 }
 
-fn render_packaged_template(target_path: &str, facts: &PackageFacts) -> String {
-    packaged_template_content(target_path)
+fn template_content(
+    target_path: &str,
+    facts: &PackageFacts,
+    source_root: Option<&Path>,
+) -> Result<String, KettleRustyError> {
+    let source = if let Some(source_root) = source_root {
+        let path = source_root.join(target_path);
+        fs::read_to_string(&path).map_err(|_| KettleRustyError::MissingTemplateSource { path })?
+    } else {
+        packaged_template_content(target_path).to_string()
+    };
+    Ok(source
         .replace("{{PACKAGE_NAME}}", &facts.package.name)
         .replace("{{RUST_VERSION}}", facts.cargo.rust_version.as_deref().unwrap_or("stable"))
-        .replace("{{RUST_EDITION}}", facts.cargo.edition.as_deref().unwrap_or("2021"))
+        .replace("{{RUST_EDITION}}", facts.cargo.edition.as_deref().unwrap_or("2021")))
+}
+
+fn template_source_root(project_root: &Path, config: &KettleConfig) -> Option<PathBuf> {
+    let root = config.templates.root.trim();
+    if root.is_empty() || root.eq_ignore_ascii_case("packaged") {
+        return None;
+    }
+
+    let mut path = project_root.join(root);
+    let profile = config.templates.profile.trim();
+    if !profile.is_empty() && !profile.eq_ignore_ascii_case("default") {
+        path.push(profile);
+    }
+    Some(path)
 }
 
 fn packaged_template_content(target_path: &str) -> &'static str {

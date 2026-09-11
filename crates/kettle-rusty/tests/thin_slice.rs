@@ -240,6 +240,73 @@ fn applies_explicit_kettle_template_entries_only() {
 }
 
 #[test]
+fn applies_profiled_local_template_sources_without_packaged_fallback() {
+    let project_root = manifest_dir().join("tmp/profiled-local-templates");
+    let _ = fs::remove_dir_all(&project_root);
+    write_tree(
+        &project_root,
+        &BTreeMap::from([
+            (
+                "Cargo.toml".to_string(),
+                "[package]\nname = \"widget\"\nversion = \"0.1.0\"\nedition = \"2021\"\n"
+                    .to_string(),
+            ),
+            (
+                "kettle.yml".to_string(),
+                "templates:\n  root: templates\n  profile: custom\n  entries:\n    - README.md\n"
+                    .to_string(),
+            ),
+            (
+                "templates/custom/README.md".to_string(),
+                "# {{PACKAGE_NAME}}\n\ncustom template\n".to_string(),
+            ),
+        ]),
+    );
+
+    let plan = plan_packaged_template_inventory(&project_root)
+        .expect("profiled local template plan should succeed");
+    assert_eq!(plan.changed_files, vec!["README.md"]);
+    assert_eq!(plan.recipe_reports[0].final_content, "# widget\n\ncustom template\n");
+
+    let applied = apply_packaged_template_inventory(&project_root)
+        .expect("profiled local template apply should succeed");
+    assert_eq!(applied.changed_files, vec!["README.md"]);
+    assert_eq!(
+        fs::read_to_string(project_root.join("README.md")).expect("README should exist"),
+        "# widget\n\ncustom template\n"
+    );
+    assert!(!project_root.join(".gitignore").exists());
+
+    fs::remove_dir_all(project_root).expect("temporary project should be removable");
+}
+
+#[test]
+fn fails_closed_when_a_selected_local_template_source_is_missing() {
+    let project_root = manifest_dir().join("tmp/missing-local-template");
+    let _ = fs::remove_dir_all(&project_root);
+    write_tree(
+        &project_root,
+        &BTreeMap::from([
+            (
+                "Cargo.toml".to_string(),
+                "[package]\nname = \"widget\"\nversion = \"0.1.0\"\nedition = \"2021\"\n"
+                    .to_string(),
+            ),
+            (
+                "kettle.yml".to_string(),
+                "templates:\n  root: templates\n  entries:\n    - README.md\n".to_string(),
+            ),
+        ]),
+    );
+
+    let error = plan_packaged_template_inventory(&project_root)
+        .expect_err("missing local template should fail closed");
+    assert!(error.to_string().contains("template source missing"));
+
+    fs::remove_dir_all(project_root).expect("temporary project should be removable");
+}
+
+#[test]
 fn conforms_to_readme_style_profile() {
     let style_fixture: Value = read_json(
         &repo_root()
