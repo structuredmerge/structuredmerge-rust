@@ -304,6 +304,42 @@ fn conforms_to_readme_style_profile() {
     fs::remove_dir_all(project_root).expect("temporary project should be removable");
 }
 
+#[test]
+fn rejects_cargo_manifests_without_a_package_name() {
+    let project_root = manifest_dir().join("tmp/missing-package-name");
+    let _ = fs::remove_dir_all(&project_root);
+    write_tree(
+        &project_root,
+        &BTreeMap::from([("Cargo.toml".to_string(), "[workspace]\nmembers = []\n".to_string())]),
+    );
+
+    let error = kettle_rusty::plan_project(&project_root).expect_err("workspace-only manifest should fail");
+    assert!(matches!(error, kettle_rusty::KettleRustyError::MissingPackageTable { .. }));
+
+    fs::remove_dir_all(project_root).expect("temporary project should be removable");
+}
+
+#[test]
+fn project_application_is_idempotent_after_the_first_run() {
+    let project_root = manifest_dir().join("tmp/project-idempotency");
+    let _ = fs::remove_dir_all(&project_root);
+    write_tree(
+        &project_root,
+        &BTreeMap::from([(
+            "Cargo.toml".to_string(),
+            "[package]\nname = \"widget\"\nversion = \"0.1.0\"\nedition = \"2021\"\n".to_string(),
+        )]),
+    );
+
+    let first = kettle_rusty::apply_project(&project_root).expect("first application should succeed");
+    assert!(!first.changed_files.is_empty());
+    let second = kettle_rusty::apply_project(&project_root).expect("second application should succeed");
+    assert!(second.changed_files.is_empty());
+    assert!(second.recipe_reports.iter().all(|report| !report.changed));
+
+    fs::remove_dir_all(project_root).expect("temporary project should be removable");
+}
+
 fn unique_request_kinds(reports: &[kettle_rusty::RecipeRunReport]) -> Vec<String> {
     reports.iter().fold(Vec::new(), |mut kinds, report| {
         if !kinds.contains(&report.request_envelope.kind) {
