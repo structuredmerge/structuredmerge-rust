@@ -343,6 +343,55 @@ fn project_application_is_idempotent_after_the_first_run() {
     fs::remove_dir_all(project_root).expect("temporary project should be removable");
 }
 
+#[test]
+fn reports_ambiguous_managed_blocks_without_overwriting_destination() {
+    let project_root = manifest_dir().join("tmp/ambiguous-managed-block");
+    let _ = fs::remove_dir_all(&project_root);
+    write_tree(
+        &project_root,
+        &BTreeMap::from([
+            (
+                "Cargo.toml".to_string(),
+                "[package]\nname = \"widget\"\nversion = \"0.1.0\"\nedition = \"2021\"\n".to_string(),
+            ),
+            (
+                "README.md".to_string(),
+                "# widget\n\n<!-- kettle-rusty:metadata:start -->\nExisting content without a closing marker.\n".to_string(),
+            ),
+            (
+                "CHANGELOG.md".to_string(),
+                "# Changelog\n\n## [Unreleased]\n\n### Added\n\n### Changed\n\n### Fixed\n\n".to_string(),
+            ),
+            (
+                "src/generated_package_info.rs".to_string(),
+                "// <</kettle-rusty:generated>>\n".to_string(),
+            ),
+        ]),
+    );
+
+    let report = plan_project(&project_root).expect("ambiguous blocks should be reportable");
+    assert!(report.changed_files.is_empty());
+    assert_eq!(report.diagnostics.len(), 2);
+    assert!(report.diagnostics.iter().all(|diagnostic| {
+        diagnostic.category == ast_merge::DiagnosticCategory::Ambiguity
+            && diagnostic.severity == ast_merge::DiagnosticSeverity::Warning
+    }));
+
+    let apply = apply_project(&project_root).expect("apply should preserve ambiguous blocks");
+    assert!(apply.changed_files.is_empty());
+    assert_eq!(
+        fs::read_to_string(project_root.join("README.md")).expect("README should be readable"),
+        "# widget\n\n<!-- kettle-rusty:metadata:start -->\nExisting content without a closing marker.\n"
+    );
+    assert_eq!(
+        fs::read_to_string(project_root.join("src/generated_package_info.rs"))
+            .expect("generated file should be readable"),
+        "// <</kettle-rusty:generated>>\n"
+    );
+
+    fs::remove_dir_all(project_root).expect("temporary project should be removable");
+}
+
 fn unique_request_kinds(reports: &[kettle_rusty::RecipeRunReport]) -> Vec<String> {
     reports.iter().fold(Vec::new(), |mut kinds, report| {
         if !kinds.contains(&report.request_envelope.kind) {

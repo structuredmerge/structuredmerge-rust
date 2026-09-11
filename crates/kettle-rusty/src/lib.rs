@@ -7,9 +7,9 @@ use std::{
 use ast_merge::{
     ContentRecipeExecutionReport, ContentRecipeExecutionReportEnvelope,
     ContentRecipeExecutionRequest, ContentRecipeExecutionRequestEnvelope, ContentRecipeStep,
-    ContentRecipeStepReport, Diagnostic, STRUCTURED_EDIT_TRANSPORT_VERSION,
-    StructuredEditApplication, StructuredEditOperationProfile, StructuredEditRequest,
-    StructuredEditResult,
+    ContentRecipeStepReport, Diagnostic, DiagnosticCategory, DiagnosticSeverity,
+    STRUCTURED_EDIT_TRANSPORT_VERSION, StructuredEditApplication, StructuredEditOperationProfile,
+    StructuredEditRequest, StructuredEditResult,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -312,6 +312,7 @@ pub fn plan_project(project_root: &Path) -> Result<ProjectReport, KettleRustyErr
         .map(|recipe| execute_recipe(project_root, recipe, &facts, &files))
         .collect::<Vec<_>>();
     let changed_files = changed_files_for_reports(&recipe_reports);
+    let diagnostics = diagnostics_for_reports(&recipe_reports);
 
     Ok(ProjectReport {
         mode: "plan".to_string(),
@@ -320,7 +321,7 @@ pub fn plan_project(project_root: &Path) -> Result<ProjectReport, KettleRustyErr
         recipe_pack: pack,
         recipe_reports,
         changed_files,
-        diagnostics: vec![],
+        diagnostics,
     })
 }
 
@@ -336,6 +337,7 @@ pub fn plan_packaged_template_inventory(
         .map(|recipe| execute_recipe(project_root, recipe, &facts, &files))
         .collect::<Vec<_>>();
     let changed_files = changed_files_for_reports(&recipe_reports);
+    let diagnostics = diagnostics_for_reports(&recipe_reports);
 
     Ok(ProjectReport {
         mode: "plan".to_string(),
@@ -344,7 +346,7 @@ pub fn plan_packaged_template_inventory(
         recipe_pack: pack,
         recipe_reports,
         changed_files,
-        diagnostics: vec![],
+        diagnostics,
     })
 }
 
@@ -453,13 +455,18 @@ fn execute_recipe(
     files: &HashMap<String, String>,
 ) -> RecipeRunReport {
     let original = files.get(&recipe.target_path).cloned().unwrap_or_default();
-    let final_content = match recipe.name {
-        PackagingRecipeName::ReadmeMetadata => synchronize_readme(&original, facts),
-        PackagingRecipeName::ChangelogUnreleased => normalize_changelog(&original),
-        PackagingRecipeName::GeneratedBlockSync => synchronize_managed_block(&original, facts),
-        PackagingRecipeName::TemplateSourceApplication => {
-            render_packaged_template(&recipe.target_path, facts)
+    let diagnostics = managed_block_diagnostic(recipe, &original);
+    let final_content = if diagnostics.is_empty() {
+        match recipe.name {
+            PackagingRecipeName::ReadmeMetadata => synchronize_readme(&original, facts),
+            PackagingRecipeName::ChangelogUnreleased => normalize_changelog(&original),
+            PackagingRecipeName::GeneratedBlockSync => synchronize_managed_block(&original, facts),
+            PackagingRecipeName::TemplateSourceApplication => {
+                render_packaged_template(&recipe.target_path, facts)
+            }
         }
+    } else {
+        original.clone()
     };
     let request = content_recipe_execution_request(ContentRecipeExecutionRequest {
         recipe_name: recipe.primitive.clone(),
@@ -484,7 +491,7 @@ fn execute_recipe(
         final_content: final_content.clone(),
         changed,
         step_reports: vec![step_report],
-        diagnostics: vec![],
+        diagnostics: diagnostics.clone(),
         metadata: HashMap::from([("packaging_recipe".to_string(), json!(recipe.name.as_str()))]),
     });
 
@@ -495,8 +502,35 @@ fn execute_recipe(
         request_envelope: content_recipe_execution_request_envelope(request),
         report_envelope: content_recipe_execution_report_envelope(report),
         final_content,
-        diagnostics: vec![],
+        diagnostics,
     }
+}
+
+fn managed_block_diagnostic(recipe: &PackagingRecipe, content: &str) -> Vec<Diagnostic> {
+    let (open_marker, close_marker) = match recipe.name {
+        PackagingRecipeName::ReadmeMetadata => {
+            ("<!-- kettle-rusty:metadata:start -->", "<!-- kettle-rusty:metadata:end -->")
+        }
+        PackagingRecipeName::GeneratedBlockSync => (MANAGED_BLOCK_OPEN, MANAGED_BLOCK_CLOSE),
+        PackagingRecipeName::ChangelogUnreleased
+        | PackagingRecipeName::TemplateSourceApplication => return vec![],
+    };
+    let open_count = content.lines().filter(|line| *line == open_marker).count();
+    let close_count = content.lines().filter(|line| *line == close_marker).count();
+    if open_count == close_count && (open_count == 0 || open_count == 1) {
+        return vec![];
+    }
+
+    vec![Diagnostic {
+        severity: DiagnosticSeverity::Warning,
+        category: DiagnosticCategory::Ambiguity,
+        message: format!(
+            "managed block markers are ambiguous for {}: found {open_count} opening and {close_count} closing markers",
+            recipe.target_path
+        ),
+        path: Some(recipe.target_path.clone()),
+        review: None,
+    }]
 }
 
 fn template_recipe(target_path: &str) -> PackagingRecipe {
@@ -517,6 +551,10 @@ fn changed_files_for_reports(reports: &[RecipeRunReport]) -> Vec<String> {
         .collect::<Vec<_>>();
     changed_files.sort();
     changed_files
+}
+
+fn diagnostics_for_reports(reports: &[RecipeRunReport]) -> Vec<Diagnostic> {
+    reports.iter().flat_map(|report| report.diagnostics.clone()).collect()
 }
 
 fn render_packaged_template(target_path: &str, facts: &PackageFacts) -> String {
