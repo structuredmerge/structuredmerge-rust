@@ -26,12 +26,21 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Clone sibling fixtures repo
+      - name: Checkout pinned kernel dependency
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: structuredmerge/structuredmerge
+          ref: ddb48f8d8c2025ea486914990e924743ba165dc4
+          path: kernel
+      - name: Resolve Cargo SSH dependency from authenticated checkout
         shell: bash
         run: |
           set -euo pipefail
-          git clone --depth 1 https://github.com/structuredmerge/structuredmerge-fixtures ../fixtures
+          git config --global url."file://${GITHUB_WORKSPACE}/kernel".insteadOf \
+            ssh://git@github.com/structuredmerge/structuredmerge.git
       - name: Setup mise
         uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c
       - name: Run checks
+        env:
+          CARGO_NET_GIT_FETCH_WITH_CLI: "true"
         run: mise run check
