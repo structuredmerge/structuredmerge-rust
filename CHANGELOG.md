@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Move kernel crates and generated Ruby bindings to structuredmerge/structuredmerge; retain kettle-rusty as the Rust native layer with a pinned kernel dependency and separate CI/release ownership.
+
 ### Added
 
 - Publish and enforce exact provider selection: unavailable explicit provider

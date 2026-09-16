@@ -16,26 +16,6 @@ run = "cargo check --workspace"
 [tasks.test]
 run = "cargo test --workspace"
 
-[tasks.alef-verify]
-run = "alef verify --exit-code"
-
-[tasks.ruby-bindings]
-run = "bundle check || bundle install && bundle exec rake spec"
-dir = "packages/ruby"
-
-[tasks.ruby-api]
-run = "bundle exec ruby ../../workspace-scripts/check_ruby_api.rb"
-dir = "packages/ruby"
-
-[tasks.ruby-package]
-run = "alef publish build --lang ruby && alef publish package --lang ruby --target x86_64-unknown-linux-gnu --output dist && BUNDLE_GEMFILE=packages/ruby/Gemfile bundle exec ruby workspace-scripts/write_ruby_artifact_manifest.rb dist"
-
-[tasks.ruby-cold-paths]
-run = "ruby workspace-scripts/measure_ruby_cold_paths.rb dist"
-
-[tasks.publish-validate]
-run = "alef publish validate"
-
 [tasks.check]
 run = "cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace"
 

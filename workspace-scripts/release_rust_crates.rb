@@ -19,26 +19,7 @@ PUBLISH_RETRY_BUFFER_SECONDS = 10
 RELEASE_CONFIRM_TIMEOUT_SECONDS = 15 * 60
 RELEASE_CONFIRM_POLL_SECONDS = 15
 
-CRATES = [
-  ["tree-haver", "tree-haver"],
-  ["ast-merge", "ast-merge"],
-  ["plain-merge", "plain-merge"],
-  ["json-merge", "json-merge"],
-  ["yaml-merge", "yaml-merge"],
-  ["toml-merge", "structuredmerge-toml-merge"],
-  ["markdown-merge", "markdown-merge"],
-  ["ruby-merge", "ruby-merge"],
-  ["go-merge", "go-merge"],
-  ["rust-merge", "rust-merge"],
-  ["typescript-merge", "typescript-merge"],
-  ["ast-template", "ast-template"],
-  ["binary-merge", "structuredmerge-binary-merge"],
-  ["zip-merge", "structuredmerge-zip-merge"],
-  ["yaml-serde-merge", "yaml-serde-merge"],
-  ["pest-toml-merge", "pest-toml-merge"],
-  ["pulldown-cmark-merge", "pulldown-cmark-merge"],
-  ["kettle-rusty", "kettle-rusty"],
-].freeze
+CRATES = [["kettle-rusty", "kettle-rusty"]].freeze
 
 options = {
   push: true,

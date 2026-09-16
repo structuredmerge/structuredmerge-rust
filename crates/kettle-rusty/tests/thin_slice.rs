@@ -251,10 +251,7 @@ fn disables_packaged_template_inventory_for_disabled_profile() {
                 "[package]\nname = \"widget\"\nversion = \"0.1.0\"\nedition = \"2021\"\n"
                     .to_string(),
             ),
-            (
-                "kettle.yml".to_string(),
-                "templates:\n  profile: disabled\n".to_string(),
-            ),
+            ("kettle.yml".to_string(), "templates:\n  profile: disabled\n".to_string()),
         ]),
     );
 

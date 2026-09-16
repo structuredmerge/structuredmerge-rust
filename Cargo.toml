@@ -1,7 +1,6 @@
 [workspace]
 members = [
-  "crates/*",
-  "packages/ruby/ext/structuredmerge_host_prototype_core_rb/native",
+  "crates/kettle-rusty",
 ]
 resolver = "2"
 
