@@ -493,6 +493,65 @@ fn rejects_cargo_manifests_without_a_package_name() {
 }
 
 #[test]
+fn matches_shared_portable_template_content_and_convergence_fixture() {
+    let fixture: Value = read_json(
+        &repo_root().join("fixtures/packaging/kettle-portable-template-convergence.json"),
+    );
+    let project_root = manifest_dir().join("tmp/portable-template-convergence");
+    let source_path =
+        fixture["template_source_paths"]["crates"].as_str().expect("Rust source path should exist");
+    let target_path = fixture["template_target_path"].as_str().expect("target path should exist");
+    let template_content =
+        fixture["template_content"].as_str().expect("template content should exist");
+    let expected_content =
+        fixture["expected_content"].as_str().expect("expected content should exist");
+    let expected_changed = fixture["expected_changed_files"]
+        .as_array()
+        .expect("changed paths should be an array")
+        .iter()
+        .map(|path| path.as_str().expect("changed path should be a string").to_string())
+        .collect::<Vec<_>>();
+    let expected_second = fixture["expected_second_run_changed_files"]
+        .as_array()
+        .expect("second-run paths should be an array")
+        .iter()
+        .map(|path| path.as_str().expect("changed path should be a string").to_string())
+        .collect::<Vec<_>>();
+
+    let _ = fs::remove_dir_all(&project_root);
+    write_tree(
+        &project_root,
+        &BTreeMap::from([
+            (
+                "Cargo.toml".to_string(),
+                "[package]\nname = \"widget\"\nversion = \"0.1.0\"\nedition = \"2021\"\n"
+                    .to_string(),
+            ),
+            (
+                "kettle.yml".to_string(),
+                format!(
+                    "templates:\n  root: templates\n  profile: custom\n  entries:\n    - {target_path}\n"
+                ),
+            ),
+            (source_path.to_string(), template_content.to_string()),
+        ]),
+    );
+
+    let plan = plan_packaged_template_inventory(&project_root).expect("plan should succeed");
+    assert_eq!(plan.changed_files, expected_changed);
+    let applied = apply_packaged_template_inventory(&project_root).expect("apply should succeed");
+    assert_eq!(applied.changed_files, expected_changed);
+    assert_eq!(
+        fs::read_to_string(project_root.join(target_path)).expect("README should exist"),
+        expected_content
+    );
+    let second = apply_packaged_template_inventory(&project_root).expect("reapply should succeed");
+    assert_eq!(second.changed_files, expected_second);
+
+    fs::remove_dir_all(project_root).expect("temporary project should be removable");
+}
+
+#[test]
 fn reports_ambiguous_multi_package_workspaces_explicitly() {
     let project_root = manifest_dir().join("tmp/ambiguous-workspace");
     let _ = fs::remove_dir_all(&project_root);
