@@ -338,6 +338,70 @@ fn fails_closed_when_a_selected_local_template_source_is_missing() {
 }
 
 #[test]
+fn preserves_shared_user_owned_readme_sections() {
+    let fixture: Value =
+        read_json(&repo_root().join("fixtures/packaging/kettle-readme-preservation.json"));
+    let project_root = manifest_dir().join("tmp/readme-preservation-shared");
+    let destination =
+        fixture["destination_readme"].as_str().expect("destination README should exist");
+    let sections = fixture["preserve_sections"]
+        .as_array()
+        .expect("preserve sections should be an array")
+        .iter()
+        .map(|section| section.as_str().expect("section should be a string").to_string())
+        .collect::<Vec<_>>();
+    let fragments = fixture["expected_preserved_fragments"]
+        .as_array()
+        .expect("expected fragments should be an array")
+        .iter()
+        .map(|fragment| fragment.as_str().expect("fragment should be a string").to_string())
+        .collect::<Vec<_>>();
+
+    let _ = fs::remove_dir_all(&project_root);
+    write_tree(
+        &project_root,
+        &BTreeMap::from([
+            (
+                "Cargo.toml".to_string(),
+                "[package]\nname = \"widget\"\nversion = \"0.1.0\"\nedition = \"2021\"\n"
+                    .to_string(),
+            ),
+            (
+                "kettle.yml".to_string(),
+                format!(
+                    "readme:\n  style: thin\n  preserve_sections: [{}]\n",
+                    sections
+                        .iter()
+                        .map(|section| format!("\"{section}\""))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+            ),
+            ("README.md".to_string(), destination.to_string()),
+            ("SECURITY.md".to_string(), "# Security\n".to_string()),
+        ]),
+    );
+
+    let plan = plan_readme_style(&project_root).expect("README plan should succeed");
+    assert!(plan.changed);
+    for fragment in &fragments {
+        assert!(
+            plan.final_content.contains(fragment),
+            "missing preserved fragment {fragment:?} in:
+{}",
+            plan.final_content
+        );
+    }
+
+    let applied = apply_readme_style(&project_root).expect("README apply should succeed");
+    assert!(applied.changed);
+    let second = apply_readme_style(&project_root).expect("README reapply should succeed");
+    assert!(!second.changed);
+
+    fs::remove_dir_all(project_root).expect("temporary project should be removable");
+}
+
+#[test]
 fn conforms_to_readme_style_profile() {
     let style_fixture: Value = read_json(
         &repo_root()
