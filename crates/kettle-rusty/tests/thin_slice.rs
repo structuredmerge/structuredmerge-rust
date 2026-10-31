@@ -493,6 +493,35 @@ fn rejects_cargo_manifests_without_a_package_name() {
 }
 
 #[test]
+fn reports_ambiguous_multi_package_workspaces_explicitly() {
+    let project_root = manifest_dir().join("tmp/ambiguous-workspace");
+    let _ = fs::remove_dir_all(&project_root);
+    write_tree(
+        &project_root,
+        &BTreeMap::from([
+            (
+                "Cargo.toml".to_string(),
+                "[workspace]\nmembers = [\"crates/one\", \"crates/two\"]\n".to_string(),
+            ),
+            (
+                "crates/one/Cargo.toml".to_string(),
+                "[package]\nname = \"one\"\nversion = \"0.1.0\"\n".to_string(),
+            ),
+            (
+                "crates/two/Cargo.toml".to_string(),
+                "[package]\nname = \"two\"\nversion = \"0.1.0\"\n".to_string(),
+            ),
+        ]),
+    );
+
+    let error = kettle_rusty::discover_facts(&project_root)
+        .expect_err("multi-package workspace selection must stay explicit");
+    assert!(error.to_string().contains("2 package members; select one explicitly"));
+
+    fs::remove_dir_all(project_root).expect("temporary project should be removable");
+}
+
+#[test]
 fn discovers_a_single_explicit_workspace_member() {
     let project_root = manifest_dir().join("tmp/single-workspace-member");
     let _ = fs::remove_dir_all(&project_root);

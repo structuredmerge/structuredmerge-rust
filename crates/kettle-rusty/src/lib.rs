@@ -267,6 +267,7 @@ pub enum KettleRustyError {
     Toml { path: PathBuf, source: toml::de::Error },
     Yaml { path: PathBuf, source: serde_yaml::Error },
     MissingPackageTable { path: PathBuf },
+    AmbiguousWorkspace { path: PathBuf, member_count: usize },
     MissingPackageName { path: PathBuf },
     InvalidWorkspaceMember { path: PathBuf, member: String },
     MissingTemplateSource { path: PathBuf },
@@ -286,6 +287,13 @@ impl fmt::Display for KettleRustyError {
             }
             Self::MissingPackageTable { path } => {
                 write!(formatter, "Cargo package table missing at {}", path.display())
+            }
+            Self::AmbiguousWorkspace { path, member_count } => {
+                write!(
+                    formatter,
+                    "workspace at {} has {member_count} package members; select one explicitly",
+                    path.display()
+                )
             }
             Self::MissingPackageName { path } => {
                 write!(formatter, "Cargo package name missing at {}", path.display())
@@ -364,9 +372,15 @@ fn package_manifest(
             path: root_manifest_path.to_path_buf(),
         });
     };
-    if members.len() != 1 {
+    if members.is_empty() {
         return Err(KettleRustyError::MissingPackageTable {
             path: root_manifest_path.to_path_buf(),
+        });
+    }
+    if members.len() > 1 {
+        return Err(KettleRustyError::AmbiguousWorkspace {
+            path: root_manifest_path.to_path_buf(),
+            member_count: members.len(),
         });
     }
     let member = members[0].as_str().ok_or_else(|| KettleRustyError::MissingPackageTable {
