@@ -698,6 +698,63 @@ fn rejects_a_default_workspace_member_not_listed_explicitly() {
 }
 
 #[test]
+fn reports_ambiguous_multiple_default_workspace_members() {
+    let project_root = manifest_dir().join("tmp/multiple-default-workspace-members");
+    let _ = fs::remove_dir_all(&project_root);
+    write_tree(
+        &project_root,
+        &BTreeMap::from([
+            (
+                "Cargo.toml".to_string(),
+                "[workspace]\nmembers = [\"crates/one\", \"crates/two\"]\ndefault-members = [\"crates/one\", \"crates/two\"]\n"
+                    .to_string(),
+            ),
+            (
+                "crates/one/Cargo.toml".to_string(),
+                "[package]\nname = \"one\"\nversion = \"0.1.0\"\n".to_string(),
+            ),
+            (
+                "crates/two/Cargo.toml".to_string(),
+                "[package]\nname = \"two\"\nversion = \"0.1.0\"\n".to_string(),
+            ),
+        ]),
+    );
+
+    let error = kettle_rusty::discover_facts(&project_root)
+        .expect_err("multiple default members must not select a package implicitly");
+    assert!(matches!(
+        error,
+        kettle_rusty::KettleRustyError::AmbiguousWorkspace { member_count: 2, .. }
+    ));
+
+    fs::remove_dir_all(project_root).expect("temporary project should be removable");
+}
+
+#[test]
+fn reports_a_missing_selected_workspace_member_manifest() {
+    let project_root = manifest_dir().join("tmp/missing-selected-workspace-member");
+    let _ = fs::remove_dir_all(&project_root);
+    write_tree(
+        &project_root,
+        &BTreeMap::from([(
+            "Cargo.toml".to_string(),
+            "[workspace]\nmembers = [\"crates/one\", \"crates/two\"]\ndefault-members = [\"crates/two\"]\n"
+                .to_string(),
+        )]),
+    );
+
+    let error = kettle_rusty::discover_facts(&project_root)
+        .expect_err("missing selected member manifest must be reported");
+    assert!(matches!(
+        error,
+        kettle_rusty::KettleRustyError::Io { path, .. }
+            if path.ends_with("crates/two/Cargo.toml")
+    ));
+
+    fs::remove_dir_all(project_root).expect("temporary project should be removable");
+}
+
+#[test]
 fn discovers_a_single_explicit_workspace_member() {
     let project_root = manifest_dir().join("tmp/single-workspace-member");
     let _ = fs::remove_dir_all(&project_root);
