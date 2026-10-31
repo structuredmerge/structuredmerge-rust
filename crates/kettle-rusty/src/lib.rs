@@ -268,6 +268,7 @@ pub enum KettleRustyError {
     Yaml { path: PathBuf, source: serde_yaml::Error },
     MissingPackageTable { path: PathBuf },
     AmbiguousWorkspace { path: PathBuf, member_count: usize },
+    InvalidDefaultWorkspaceMember { path: PathBuf, member: String },
     MissingPackageName { path: PathBuf },
     InvalidWorkspaceMember { path: PathBuf, member: String },
     MissingTemplateSource { path: PathBuf },
@@ -291,7 +292,14 @@ impl fmt::Display for KettleRustyError {
             Self::AmbiguousWorkspace { path, member_count } => {
                 write!(
                     formatter,
-                    "workspace at {} has {member_count} package members; select one explicitly",
+                    "workspace at {} has {member_count} package members; set one explicit default-members entry",
+                    path.display()
+                )
+            }
+            Self::InvalidDefaultWorkspaceMember { path, member } => {
+                write!(
+                    formatter,
+                    "default workspace member {member:?} is not an explicit member in {}",
                     path.display()
                 )
             }
@@ -377,13 +385,34 @@ fn package_manifest(
             path: root_manifest_path.to_path_buf(),
         });
     }
-    if members.len() > 1 {
-        return Err(KettleRustyError::AmbiguousWorkspace {
-            path: root_manifest_path.to_path_buf(),
-            member_count: members.len(),
+    let member = if members.len() == 1 {
+        members[0].as_str()
+    } else {
+        let workspace = root_manifest
+            .get("workspace")
+            .and_then(TomlValue::as_table)
+            .expect("workspace table was checked above");
+        let default_members = workspace.get("default-members").and_then(TomlValue::as_array);
+        let selected = default_members.filter(|entries| entries.len() == 1).and_then(|entries| {
+            let selected = entries[0].as_str()?;
+            members.iter().any(|member| member.as_str() == Some(selected)).then_some(selected)
         });
+        if let Some(selected) = selected {
+            Some(selected)
+        } else if let Some(entries) = default_members.filter(|entries| entries.len() == 1) {
+            let member = entries[0].as_str().unwrap_or_default().to_string();
+            return Err(KettleRustyError::InvalidDefaultWorkspaceMember {
+                path: root_manifest_path.to_path_buf(),
+                member,
+            });
+        } else {
+            return Err(KettleRustyError::AmbiguousWorkspace {
+                path: root_manifest_path.to_path_buf(),
+                member_count: members.len(),
+            });
+        }
     }
-    let member = members[0].as_str().ok_or_else(|| KettleRustyError::MissingPackageTable {
+    .ok_or_else(|| KettleRustyError::MissingPackageTable {
         path: root_manifest_path.to_path_buf(),
     })?;
     let member_path = Path::new(member);

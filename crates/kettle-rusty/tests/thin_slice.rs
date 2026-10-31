@@ -639,7 +639,60 @@ fn reports_ambiguous_multi_package_workspaces_explicitly() {
 
     let error = kettle_rusty::discover_facts(&project_root)
         .expect_err("multi-package workspace selection must stay explicit");
-    assert!(error.to_string().contains("2 package members; select one explicitly"));
+    assert!(
+        error.to_string().contains("2 package members; set one explicit default-members entry")
+    );
+
+    fs::remove_dir_all(project_root).expect("temporary project should be removable");
+}
+
+#[test]
+fn selects_one_explicit_default_member_from_a_multi_package_workspace() {
+    let project_root = manifest_dir().join("tmp/default-workspace-member");
+    let _ = fs::remove_dir_all(&project_root);
+    write_tree(
+        &project_root,
+        &BTreeMap::from([
+            (
+                "Cargo.toml".to_string(),
+                "[workspace]\nmembers = [\"crates/one\", \"crates/two\"]\ndefault-members = [\"crates/two\"]\n"
+                    .to_string(),
+            ),
+            (
+                "crates/one/Cargo.toml".to_string(),
+                "[package]\nname = \"one\"\nversion = \"0.1.0\"\n".to_string(),
+            ),
+            (
+                "crates/two/Cargo.toml".to_string(),
+                "[package]\nname = \"two\"\nversion = \"0.1.0\"\n".to_string(),
+            ),
+        ]),
+    );
+
+    let facts = kettle_rusty::discover_facts(&project_root)
+        .expect("single default member should identify the target package");
+    assert_eq!(facts.package.name, "two");
+    assert_eq!(facts.cargo.manifest_path, "crates/two/Cargo.toml");
+
+    fs::remove_dir_all(project_root).expect("temporary project should be removable");
+}
+
+#[test]
+fn rejects_a_default_workspace_member_not_listed_explicitly() {
+    let project_root = manifest_dir().join("tmp/invalid-default-workspace-member");
+    let _ = fs::remove_dir_all(&project_root);
+    write_tree(
+        &project_root,
+        &BTreeMap::from([(
+            "Cargo.toml".to_string(),
+            "[workspace]\nmembers = [\"crates/*\"]\ndefault-members = [\"crates/app\"]\n"
+                .to_string(),
+        )]),
+    );
+
+    let error = kettle_rusty::discover_facts(&project_root)
+        .expect_err("glob-only workspace membership must not be guessed");
+    assert!(matches!(error, kettle_rusty::KettleRustyError::InvalidWorkspaceMember { .. }));
 
     fs::remove_dir_all(project_root).expect("temporary project should be removable");
 }
